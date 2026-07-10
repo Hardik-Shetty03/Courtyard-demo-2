@@ -5,7 +5,7 @@ import {
   ChevronLeft, ChevronRight, CalendarDays, Plus, Clock,
   User, Phone, Users, IndianRupee, Edit2, X, CheckCircle2,
   ArrowLeftRight, AlarmClock, CreditCard, Trash2, FileText,
-  AlertTriangle, Check,
+  AlertTriangle, Check, CalendarRange
 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { formatCurrency, formatTime } from '@/utils';
@@ -17,11 +17,10 @@ import CheckoutModal from '@/components/checkout/CheckoutModal';
 // ─────────────────────────────────────────────────────────────
 const SLOT_H = 80;        // px per 1-hour slot
 const START_H = 6;        // 6 AM
-const END_H   = 23;       // 11 PM  (last slot: 22:00–23:00)
+const END_H   = 23;       // 11 PM (last slot starts at 10 PM)
 const NUM_SLOTS = END_H - START_H;  // 17
 
 const SLOT_HOURS = Array.from({ length: NUM_SLOTS }, (_, i) => START_H + i);
-// [6,7,8,...,22]
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS
@@ -62,10 +61,39 @@ function fmtDayShort(d: Date): string {
   });
 }
 
-// Get "is now between start and end" for a booking
+// Get "is now between start and end" for an active booking
 function isCurrentlyOngoing(b: Booking): boolean {
   const now = Date.now();
-  return new Date(b.startTime).getTime() <= now && now < new Date(b.endTime).getTime();
+  return b.status === 'active' && new Date(b.startTime).getTime() <= now && now < new Date(b.endTime).getTime();
+}
+
+// Find next available start time for a court based on conflicts
+function findNextAvailableTime(courtId: string, desiredStart: Date, durationMinutes: number, bookings: Booking[]): Date {
+  let candidateStart = new Date(desiredStart);
+  let conflict = true;
+  let iterations = 0;
+
+  while (conflict && iterations < 50) {
+    conflict = false;
+    const candidateEnd = new Date(candidateStart.getTime() + durationMinutes * 60000);
+
+    const overlapping = bookings.find(b => {
+      if (b.courtId !== courtId || b.status === 'cancelled') return false;
+      const sameDay = new Date(b.startTime).toDateString() === desiredStart.toDateString();
+      if (!sameDay) return false;
+
+      const bStart = new Date(b.startTime).getTime();
+      const bEnd = new Date(b.endTime).getTime();
+      return candidateStart.getTime() < bEnd && candidateEnd.getTime() > bStart;
+    });
+
+    if (overlapping) {
+      conflict = true;
+      candidateStart = new Date(overlapping.endTime);
+      iterations++;
+    }
+  }
+  return candidateStart;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -81,8 +109,7 @@ function BookingCard({ booking, onClick }: BookingCardProps) {
   const endDate   = new Date(booking.endTime);
 
   const startOffsetH = (startDate.getHours() - START_H) + startDate.getMinutes() / 60;
-  const durationH    = (endDate.getHours() - startDate.getHours()) +
-                       (endDate.getMinutes() - startDate.getMinutes()) / 60;
+  const durationH    = (endDate.getTime() - startDate.getTime()) / 3600000;
 
   const top    = startOffsetH * SLOT_H + 2;
   const height = Math.max(durationH * SLOT_H - 4, 36);
@@ -91,14 +118,14 @@ function BookingCard({ booking, onClick }: BookingCardProps) {
   const isPast  = Date.now() > endDate.getTime();
   const paid    = booking.paymentStatus === 'paid';
 
-  // Color scheme
+  // Status-based colors
   const colors = isPast && !paid
-    ? { bg: 'bg-gray-400 hover:bg-gray-500', text: 'text-white', badge: 'bg-red-500' }
+    ? { bg: 'bg-gray-400 hover:bg-gray-500', text: 'text-white', badge: 'bg-red-500 text-white' }
     : ongoing
-    ? { bg: 'bg-amber-400 hover:bg-amber-500', text: 'text-amber-900', badge: 'bg-red-500' }
+    ? { bg: 'bg-amber-400 hover:bg-amber-500', text: 'text-amber-900', badge: 'bg-red-500 text-white animate-pulse' }
     : paid
-    ? { bg: 'bg-[#0F5132] hover:bg-[#0a3d26]', text: 'text-white', badge: 'bg-green-200 text-green-800' }
-    : { bg: 'bg-blue-500 hover:bg-blue-600', text: 'text-white', badge: 'bg-red-500 text-white' };
+    ? { bg: 'bg-[#0F5132] hover:bg-[#0a3d26]', text: 'text-white', badge: 'bg-emerald-600 text-white' }
+    : { bg: 'bg-blue-500 hover:bg-blue-600', text: 'text-white', badge: 'bg-blue-700 text-white' };
 
   const compact = height < 64;
 
@@ -107,45 +134,34 @@ function BookingCard({ booking, onClick }: BookingCardProps) {
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      transition={{ duration: 0.15 }}
+      transition={{ duration: 0.12 }}
       onClick={onClick}
       style={{ position: 'absolute', top, height, left: 4, right: 4, zIndex: 10 }}
-      className={`${colors.bg} ${colors.text} rounded-xl text-left overflow-hidden shadow-md cursor-pointer transition-colors`}
+      className={`${colors.bg} ${colors.text} rounded-xl text-left overflow-hidden shadow-md cursor-pointer transition-colors border border-black/5`}
     >
       <div className={`flex flex-col h-full ${compact ? 'px-2 py-1' : 'p-2.5'}`}>
-        {/* Ongoing pulse indicator */}
         {ongoing && (
           <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-white rounded-full animate-ping opacity-75" />
         )}
 
-        {/* Customer name */}
         <div className={`font-bold leading-tight truncate ${compact ? 'text-xs' : 'text-sm'}`}>
           {booking.customerName.toUpperCase()}
         </div>
 
-        {/* Time */}
         {!compact && (
-          <div className="text-xs opacity-90 mt-0.5">
-            {fmtHour(startDate.getHours())} – {fmtHour(endDate.getHours())}
+          <div className="text-[11px] opacity-90 mt-0.5 font-medium">
+            {formatTime(booking.startTime)} – {formatTime(booking.endTime)}
           </div>
         )}
 
-        {/* Bottom row: Bill + Status */}
         {height >= 56 && (
           <div className="flex items-center justify-between mt-auto gap-1">
-            <span className="text-xs font-semibold opacity-90">
+            <span className="text-xs font-bold opacity-95">
               {formatCurrency(booking.totalCharge)}
             </span>
-            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${colors.badge}`}>
+            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${colors.badge}`}>
               {paid ? 'PAID' : 'UNPAID'}
             </span>
-          </div>
-        )}
-
-        {/* Players count if tall enough */}
-        {height >= 96 && (
-          <div className="flex items-center gap-1 text-xs opacity-75 mt-0.5">
-            <Users size={10} /> {booking.numberOfPlayers} players
           </div>
         )}
       </div>
@@ -159,14 +175,14 @@ function BookingCard({ booking, onClick }: BookingCardProps) {
 interface DetailModalProps {
   booking: Booking;
   courts: Court[];
+  bookingsList: Booking[];
   onClose: () => void;
   onEdit: (b: Booking) => void;
   onCheckout: (courtId: string) => void;
 }
 
-function BookingDetailModal({ booking, courts, onClose, onEdit, onCheckout }: DetailModalProps) {
+function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, onCheckout }: DetailModalProps) {
   const { cancelBooking, extendBooking, moveBooking, markPaid, getTabTotal, getCourtCharge } = useStore();
-  const [tab, setTab] = useState<'info' | 'actions'>('info');
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showMovePanel, setShowMovePanel] = useState(false);
 
@@ -179,6 +195,21 @@ function BookingDetailModal({ booking, courts, onClose, onEdit, onCheckout }: De
   const runningTotal = courtCharge + tabTotal;
 
   const otherCourts = courts.filter(c => c.id !== booking.courtId && c.isEnabled && !c.isMaintenanceMode);
+
+  // Check if moving to target court creates a conflict
+  const checkMoveConflict = (targetCourtId: string): boolean => {
+    return bookingsList.some(b => {
+      if (b.courtId !== targetCourtId || b.status === 'cancelled' || b.id === booking.id) return false;
+      const sameDay = new Date(b.startTime).toDateString() === startDate.toDateString();
+      if (!sameDay) return false;
+
+      const bStart = new Date(b.startTime).getTime();
+      const bEnd = new Date(b.endTime).getTime();
+      const curStart = startDate.getTime();
+      const curEnd = endDate.getTime();
+      return curStart < bEnd && curEnd > bStart;
+    });
+  };
 
   const STATUS_COLOR = booking.paymentStatus === 'paid'
     ? 'bg-emerald-100 text-emerald-700'
@@ -214,20 +245,32 @@ function BookingDetailModal({ booking, courts, onClose, onEdit, onCheckout }: De
     return (
       <ModalShell onClose={onClose} title="Move to Court">
         <div className="p-5 space-y-3">
-          <p className="text-sm text-gray-500">Select a court to move this booking to:</p>
+          <p className="text-sm text-gray-500">Select an available court for this time range:</p>
           {otherCourts.length === 0 ? (
             <p className="text-sm text-gray-400 text-center py-4">No other courts available</p>
           ) : (
-            otherCourts.map(c => (
-              <button
-                key={c.id}
-                onClick={() => { moveBooking(booking.id, c.id); onClose(); }}
-                className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-green-50 border border-gray-200 hover:border-green-300 rounded-xl transition-colors"
-              >
-                <span className="font-semibold text-gray-900">{c.name}</span>
-                <span className="text-sm text-gray-500">{formatCurrency(c.hourlyRate)}/hr</span>
-              </button>
-            ))
+            otherCourts.map(c => {
+              const hasConflict = checkMoveConflict(c.id);
+              return (
+                <button
+                  key={c.id}
+                  disabled={hasConflict}
+                  onClick={() => { moveBooking(booking.id, c.id); onClose(); }}
+                  className={`w-full flex items-center justify-between p-3 border rounded-xl transition-colors ${
+                    hasConflict
+                      ? 'bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed opacity-60'
+                      : 'bg-gray-50 hover:bg-green-50 border-gray-200 hover:border-green-300 text-gray-900 cursor-pointer'
+                  }`}
+                >
+                  <span className="font-semibold">{c.name}</span>
+                  {hasConflict ? (
+                    <span className="text-xs text-red-500 font-bold">⚠️ Overlap</span>
+                  ) : (
+                    <span className="text-xs text-gray-500">{formatCurrency(c.hourlyRate)}/hr</span>
+                  )}
+                </button>
+              );
+            })
           )}
           <button onClick={() => setShowMovePanel(false)} className="btn-ghost w-full mt-2">Back</button>
         </div>
@@ -237,37 +280,35 @@ function BookingDetailModal({ booking, courts, onClose, onEdit, onCheckout }: De
 
   return (
     <ModalShell onClose={onClose}>
-      {/* Header */}
-      <div className={`p-4 ${ongoing ? 'bg-amber-400' : 'bg-blue-500'}`}>
+      <div className={`p-5 ${ongoing ? 'bg-amber-400 text-amber-950' : 'bg-blue-500 text-white'}`}>
         <div className="flex items-start justify-between">
           <div>
-            <div className="text-white/80 text-xs font-medium">{court?.name ?? '—'}</div>
-            <h2 className="text-xl font-black text-white">{booking.customerName}</h2>
-            <div className="flex items-center gap-2 mt-1">
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${STATUS_COLOR}`}>
+            <div className="text-xs font-bold opacity-80">{court?.name}</div>
+            <h2 className="text-xl font-black">{booking.customerName.toUpperCase()}</h2>
+            <div className="flex items-center gap-2 mt-1.5">
+              <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full ${STATUS_COLOR}`}>
                 {booking.paymentStatus.toUpperCase()}
               </span>
               {ongoing && (
-                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-white/30 text-white animate-pulse">
-                  ● LIVE
+                <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-white/20 text-white animate-pulse">
+                  ● LIVE MATCH
                 </span>
               )}
             </div>
           </div>
-          <button onClick={onClose} className="text-white/80 hover:text-white p-1">
+          <button onClick={onClose} className="opacity-80 hover:opacity-100 p-1">
             <X size={20} />
           </button>
         </div>
       </div>
 
-      {/* Info grid */}
-      <div className="p-4 grid grid-cols-2 gap-3">
-        <InfoRow icon={<Clock size={14} />} label="Start" value={fmtHour(startDate.getHours())} />
-        <InfoRow icon={<Clock size={14} />} label="End" value={fmtHour(endDate.getHours())} />
+      <div className="p-5 grid grid-cols-2 gap-3">
+        <InfoRow icon={<Clock size={14} />} label="Start Time" value={formatTime(booking.startTime)} />
+        <InfoRow icon={<Clock size={14} />} label="End Time" value={formatTime(booking.endTime)} />
         <InfoRow icon={<Users size={14} />} label="Players" value={`${booking.numberOfPlayers}`} />
         <InfoRow icon={<Phone size={14} />} label="Phone" value={booking.phone} />
-        <InfoRow icon={<IndianRupee size={14} />} label="Court Rate" value={`${formatCurrency(court?.hourlyRate ?? 0)}/hr`} />
-        <InfoRow icon={<IndianRupee size={14} />} label="Total Bill" value={formatCurrency(runningTotal)} highlight />
+        <InfoRow icon={<IndianRupee size={14} />} label="Hourly Rate" value={`${formatCurrency(court?.hourlyRate ?? 0)}/hr`} />
+        <InfoRow icon={<IndianRupee size={14} />} label="Total Running Bill" value={formatCurrency(runningTotal)} highlight />
         {booking.notes && (
           <div className="col-span-2">
             <InfoRow icon={<FileText size={14} />} label="Notes" value={booking.notes} />
@@ -275,59 +316,57 @@ function BookingDetailModal({ booking, courts, onClose, onEdit, onCheckout }: De
         )}
       </div>
 
-      {/* Bill breakdown */}
-      <div className="mx-4 mb-4 bg-gray-50 rounded-xl p-3 space-y-1.5">
-        <div className="flex justify-between text-sm"><span className="text-gray-500">Court Charge</span><span className="font-medium">{formatCurrency(courtCharge)}</span></div>
-        <div className="flex justify-between text-sm"><span className="text-gray-500">F&amp;B Tab</span><span className="font-medium">{formatCurrency(tabTotal)}</span></div>
-        <div className="flex justify-between text-sm font-bold border-t border-gray-200 pt-2">
-          <span>Total</span>
+      <div className="mx-5 mb-5 bg-gray-50 rounded-xl p-4 space-y-2 border border-gray-100">
+        <div className="flex justify-between text-xs text-gray-500"><span>Court Charge</span><span className="font-semibold text-gray-700">{formatCurrency(courtCharge)}</span></div>
+        <div className="flex justify-between text-xs text-gray-500"><span>F&amp;B Tabs</span><span className="font-semibold text-gray-700">{formatCurrency(tabTotal)}</span></div>
+        <div className="flex justify-between text-sm font-bold border-t border-gray-200 pt-2.5">
+          <span>Total Bill</span>
           <span className="text-[#0F5132]">{formatCurrency(runningTotal)}</span>
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="px-4 pb-4 space-y-2">
+      <div className="px-5 pb-5 space-y-2.5">
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => onEdit(booking)}
-            className="flex items-center justify-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-xl text-sm font-medium transition-colors"
+            className="flex items-center justify-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl text-xs font-semibold transition-colors"
           >
-            <Edit2 size={14} /> Edit
+            <Edit2 size={13} /> Edit
           </button>
           <button
             onClick={() => { extendBooking(booking.id, 1); onClose(); }}
-            className="flex items-center justify-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 py-2.5 rounded-xl text-sm font-medium transition-colors"
+            className="flex items-center justify-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 py-3 rounded-xl text-xs font-semibold transition-colors"
           >
-            <AlarmClock size={14} /> +1 Hour
+            <AlarmClock size={13} /> Extend 1h
           </button>
           <button
             onClick={() => setShowMovePanel(true)}
-            className="flex items-center justify-center gap-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 py-2.5 rounded-xl text-sm font-medium transition-colors"
+            className="flex items-center justify-center gap-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 py-3 rounded-xl text-xs font-semibold transition-colors"
           >
-            <ArrowLeftRight size={14} /> Move Court
+            <ArrowLeftRight size={13} /> Move Court
           </button>
           {booking.paymentStatus !== 'paid' && (
             <button
               onClick={() => { markPaid(booking.id); onClose(); }}
-              className="flex items-center justify-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 py-2.5 rounded-xl text-sm font-medium transition-colors"
+              className="flex items-center justify-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 py-3 rounded-xl text-xs font-semibold transition-colors"
             >
-              <Check size={14} /> Mark Paid
+              <Check size={13} /> Mark Paid
             </button>
           )}
         </div>
 
         <button
           onClick={() => onCheckout(booking.courtId)}
-          className="btn-primary w-full py-3 flex items-center justify-center gap-2 text-sm"
+          className="btn-primary w-full py-3.5 flex items-center justify-center gap-2 text-sm"
         >
-          <CreditCard size={16} /> Checkout — {formatCurrency(runningTotal)}
+          <CreditCard size={15} /> Checkout &amp; Pay — {formatCurrency(runningTotal)}
         </button>
 
         <button
           onClick={() => setShowCancelConfirm(true)}
-          className="w-full flex items-center justify-center gap-1.5 text-red-500 hover:bg-red-50 py-2.5 rounded-xl text-sm font-medium transition-colors"
+          className="w-full flex items-center justify-center gap-1.5 text-red-500 hover:bg-red-50 py-2.5 rounded-xl text-xs font-semibold transition-colors"
         >
-          <Trash2 size={14} /> Cancel Booking
+          <Trash2 size={13} /> Cancel Booking
         </button>
       </div>
     </ModalShell>
@@ -336,9 +375,9 @@ function BookingDetailModal({ booking, courts, onClose, onEdit, onCheckout }: De
 
 function InfoRow({ icon, label, value, highlight = false }: { icon: React.ReactNode; label: string; value: string; highlight?: boolean }) {
   return (
-    <div className="bg-gray-50 rounded-lg p-2.5">
-      <div className="flex items-center gap-1 text-gray-400 text-xs mb-0.5">{icon}{label}</div>
-      <div className={`font-semibold text-sm ${highlight ? 'text-[#0F5132]' : 'text-gray-900'}`}>{value}</div>
+    <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+      <div className="flex items-center gap-1.5 text-gray-400 text-[10px] uppercase font-bold tracking-wider mb-1">{icon}{label}</div>
+      <div className={`font-bold text-sm ${highlight ? 'text-[#0F5132] text-base' : 'text-gray-900'}`}>{value}</div>
     </div>
   );
 }
@@ -373,7 +412,7 @@ function ModalShell({ children, onClose, title }: { children: React.ReactNode; o
 }
 
 // ─────────────────────────────────────────────────────────────
-// BOOKING CREATE/EDIT MODAL (inline version with new fields)
+// BOOKING CREATE/EDIT MODAL
 // ─────────────────────────────────────────────────────────────
 interface CreateModalProps {
   open: boolean;
@@ -382,9 +421,10 @@ interface CreateModalProps {
   startHour: number;
   selectedDate: Date;
   editBooking: Booking | null;
+  bookingsList: Booking[];
 }
 
-function CreateBookingModal({ open, onClose, courtId, startHour, selectedDate, editBooking }: CreateModalProps) {
+function CreateBookingModal({ open, onClose, courtId, startHour, selectedDate, editBooking, bookingsList }: CreateModalProps) {
   const { courts, createBooking, updateBooking } = useStore();
   const enabledCourts = courts.filter(c => c.isEnabled && !c.isMaintenanceMode);
 
@@ -394,39 +434,91 @@ function CreateBookingModal({ open, onClose, courtId, startHour, selectedDate, e
     numberOfPlayers: 2,
     courtId: courtId,
     startHour: startHour,
-    duration: 1,
+    startMinute: 0,
+    endHour: startHour + 1,
+    endMinute: 0,
     notes: '',
   });
 
   useEffect(() => {
     if (!open) return;
     if (editBooking) {
-      const sh = new Date(editBooking.startTime).getHours();
-      const durationH = editBooking.duration / 60;
+      const start = new Date(editBooking.startTime);
+      const end = new Date(editBooking.endTime);
       setForm({
         customerName: editBooking.customerName,
         phone: editBooking.phone,
         numberOfPlayers: editBooking.numberOfPlayers,
         courtId: editBooking.courtId,
-        startHour: sh,
-        duration: durationH,
+        startHour: start.getHours(),
+        startMinute: start.getMinutes(),
+        endHour: end.getHours(),
+        endMinute: end.getMinutes(),
         notes: editBooking.notes,
       });
     } else {
-      setForm(f => ({ ...f, courtId, startHour, duration: 1 }));
+      setForm({
+        customerName: '',
+        phone: '',
+        numberOfPlayers: 2,
+        courtId,
+        startHour,
+        startMinute: 0,
+        endHour: Math.min(23, startHour + 1),
+        endMinute: 0,
+        notes: '',
+      });
     }
   }, [open, editBooking, courtId, startHour]);
 
-  const selectedCourt = courts.find(c => c.id === form.courtId);
-  const estimatedCharge = (selectedCourt?.hourlyRate ?? 500) * form.duration;
+  const startD = new Date(selectedDate);
+  startD.setHours(form.startHour, form.startMinute, 0, 0);
 
-  const endHour = form.startHour + form.duration;
+  const endD = new Date(selectedDate);
+  endD.setHours(form.endHour, form.endMinute, 0, 0);
+
+  const durationMin = Math.round((endD.getTime() - startD.getTime()) / 60000);
+  const selectedCourt = courts.find(c => c.id === form.courtId);
+  const estimatedCharge = Math.ceil(((durationMin > 0 ? durationMin : 0) / 60) * (selectedCourt?.hourlyRate ?? 500));
+
+  // Overlap and conflict checks
+  const isOutOfOperatingHours = startD.getHours() < 6 || endD.getHours() > 23 || (endD.getHours() === 23 && endD.getMinutes() > 0);
+  const invalidTimeRange = durationMin <= 0;
+
+  const conflict = bookingsList.find(b => {
+    if (b.courtId !== form.courtId || b.status === 'cancelled') return false;
+    if (editBooking && b.id === editBooking.id) return false;
+
+    const sameDay = new Date(b.startTime).toDateString() === selectedDate.toDateString();
+    if (!sameDay) return false;
+
+    const bStart = new Date(b.startTime).getTime();
+    const bEnd = new Date(b.endTime).getTime();
+    return startD.getTime() < bEnd && endD.getTime() > bStart;
+  });
+
+  // Suggest next available slot if conflict exists
+  let suggestion: Date | null = null;
+  if (conflict && !invalidTimeRange && !isOutOfOperatingHours) {
+    suggestion = findNextAvailableTime(form.courtId, startD, durationMin, bookingsList);
+  }
+
+  const applySuggestion = () => {
+    if (!suggestion) return;
+    const durMs = durationMin * 60000;
+    const suggEnd = new Date(suggestion.getTime() + durMs);
+    setForm(f => ({
+      ...f,
+      startHour: suggestion!.getHours(),
+      startMinute: suggestion!.getMinutes(),
+      endHour: suggEnd.getHours(),
+      endMinute: suggEnd.getMinutes(),
+    }));
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const base = new Date(selectedDate);
-    base.setHours(form.startHour, 0, 0, 0);
-    const endDate = new Date(base.getTime() + form.duration * 3600000);
+    if (invalidTimeRange || isOutOfOperatingHours || conflict) return;
 
     if (editBooking) {
       updateBooking(editBooking.id, {
@@ -434,8 +526,8 @@ function CreateBookingModal({ open, onClose, courtId, startHour, selectedDate, e
         phone: form.phone,
         numberOfPlayers: form.numberOfPlayers,
         notes: form.notes,
-        duration: form.duration * 60,
-        endTime: endDate.toISOString(),
+        duration: durationMin,
+        endTime: endD.toISOString(),
         totalCharge: estimatedCharge,
       });
     } else {
@@ -444,9 +536,9 @@ function CreateBookingModal({ open, onClose, courtId, startHour, selectedDate, e
         customerName: form.customerName,
         phone: form.phone,
         numberOfPlayers: form.numberOfPlayers,
-        startTime: base.toISOString(),
-        endTime: endDate.toISOString(),
-        duration: form.duration * 60,
+        startTime: startD.toISOString(),
+        endTime: endD.toISOString(),
+        duration: durationMin,
         notes: form.notes,
       });
     }
@@ -518,59 +610,100 @@ function CreateBookingModal({ open, onClose, courtId, startHour, selectedDate, e
             </select>
           </div>
 
-          {/* Start Time */}
-          <div>
-            <label className="label flex items-center gap-1"><Clock size={12} className="text-gray-400" /> Start Time</label>
-            <div className="flex flex-wrap gap-1.5">
-              {SLOT_HOURS.map(h => (
-                <button
-                  key={h} type="button"
-                  onClick={() => setForm({ ...form, startHour: h })}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                    form.startHour === h
-                      ? 'bg-[#0F5132] text-white border-[#0F5132]'
-                      : 'bg-white text-gray-600 border-gray-200 hover:border-[#0F5132]'
-                  }`}
-                >
-                  {fmtHourShort(h)}
-                </button>
-              ))}
+          {/* Start Time Selectors */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label flex items-center gap-1"><Clock size={12} className="text-gray-400" /> Start Hour</label>
+              <select value={form.startHour} onChange={e => setForm({ ...form, startHour: parseInt(e.target.value) })} className="input">
+                {Array.from({ length: 17 }, (_, i) => 6 + i).map(h => (
+                  <option key={h} value={h}>{fmtHour(h)}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Start Minute</label>
+              <select value={form.startMinute} onChange={e => setForm({ ...form, startMinute: parseInt(e.target.value) })} className="input">
+                {[0, 15, 30, 45].map(m => (
+                  <option key={m} value={m}>{m.toString().padStart(2, '0')}</option>
+                ))}
+              </select>
             </div>
           </div>
 
-          {/* Duration */}
-          <div>
-            <label className="label">Duration</label>
-            <div className="flex gap-2">
-              {[1, 2, 3, 4].map(d => (
-                <button
-                  key={d} type="button"
-                  onClick={() => setForm({ ...form, duration: d })}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 transition-colors ${
-                    form.duration === d
-                      ? 'bg-[#0F5132] text-white border-[#0F5132]'
-                      : 'bg-white text-gray-700 border-gray-200 hover:border-[#0F5132]'
-                  }`}
-                >
-                  {d}h
-                </button>
-              ))}
+          {/* End Time Selectors */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label flex items-center gap-1"><Clock size={12} className="text-gray-400" /> End Hour</label>
+              <select value={form.endHour} onChange={e => setForm({ ...form, endHour: parseInt(e.target.value) })} className="input">
+                {Array.from({ length: 18 }, (_, i) => 6 + i).map(h => (
+                  <option key={h} value={h}>{fmtHour(h)}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">End Minute</label>
+              <select value={form.endMinute} onChange={e => setForm({ ...form, endMinute: parseInt(e.target.value) })} className="input">
+                {[0, 15, 30, 45].map(m => (
+                  <option key={m} value={m}>{m.toString().padStart(2, '0')}</option>
+                ))}
+              </select>
             </div>
           </div>
+
+          {/* Conflict Display Box */}
+          {conflict && (
+            <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-3.5 space-y-2 text-xs">
+              <div className="font-semibold flex items-center gap-1">
+                <AlertTriangle size={14} /> Time Conflict Detected
+              </div>
+              <p>
+                This court is already booked by <span className="font-bold">{conflict.customerName}</span> from{' '}
+                <span className="font-bold">{formatTime(conflict.startTime)}</span> to{' '}
+                <span className="font-bold">{formatTime(conflict.endTime)}</span>.
+              </p>
+              {suggestion && (
+                <div className="pt-1.5 border-t border-red-200 flex items-center justify-between gap-2">
+                  <span>Suggested slot: <b>{formatTime(suggestion.toISOString())}</b></span>
+                  <button
+                    type="button"
+                    onClick={applySuggestion}
+                    className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded font-bold transition-colors"
+                  >
+                    Use Suggested Time
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Time range warnings */}
+          {invalidTimeRange && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 text-xs font-semibold flex items-center gap-1">
+              <AlertTriangle size={14} /> End time must be strictly after the start time.
+            </div>
+          )}
+
+          {isOutOfOperatingHours && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 text-xs font-semibold flex items-center gap-1">
+              <AlertTriangle size={14} /> Bookings must stay within 6:00 AM – 11:00 PM.
+            </div>
+          )}
 
           {/* Time Preview */}
-          <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-center justify-between">
-            <div>
-              <div className="text-xs text-green-600 font-medium">Booking Window</div>
-              <div className="text-sm font-bold text-green-900">
-                {fmtHour(form.startHour)} → {fmtHour(endHour)}
+          {!invalidTimeRange && !isOutOfOperatingHours && !conflict && (
+            <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-center justify-between">
+              <div>
+                <div className="text-xs text-green-600 font-medium">Duration: {Math.floor(durationMin / 60)}h {durationMin % 60}m</div>
+                <div className="text-sm font-bold text-green-900">
+                  {formatTime(startD.toISOString())} → {formatTime(endD.toISOString())}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-green-600 font-medium">Court Charge</div>
+                <div className="text-xl font-black text-[#0F5132]">{formatCurrency(estimatedCharge)}</div>
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-xs text-green-600 font-medium">Estimated Charge</div>
-              <div className="text-xl font-black text-[#0F5132]">{formatCurrency(estimatedCharge)}</div>
-            </div>
-          </div>
+          )}
 
           {/* Notes */}
           <div>
@@ -583,10 +716,14 @@ function CreateBookingModal({ open, onClose, courtId, startHour, selectedDate, e
             />
           </div>
 
-          {/* Submit */}
+          {/* Submit buttons */}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-            <button type="submit" className="btn-primary flex-1 py-3 text-base">
+            <button
+              type="submit"
+              disabled={invalidTimeRange || isOutOfOperatingHours || !!conflict}
+              className="btn-primary flex-1 py-3 text-base disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               {editBooking ? 'Update Booking' : 'Book Court'}
             </button>
           </div>
@@ -610,29 +747,13 @@ interface CourtColProps {
 function CourtColumn({ court, dayBookings, currentTimeTop, onBook, onBookingClick }: CourtColProps) {
   const courtBookings = dayBookings.filter(b => b.courtId === court.id);
 
-  // Build set of hours that are occupied
-  const occupiedHours = new Set<number>();
-  courtBookings.forEach(b => {
-    const sh = new Date(b.startTime).getHours();
-    const eh = new Date(b.endTime).getHours();
-    for (let h = sh; h < eh; h++) occupiedHours.add(h);
-  });
-
   return (
     <div className="flex-1 min-w-[140px] border-r border-gray-100 last:border-r-0">
-      {/* Court header */}
       <div className="h-10 bg-[#0F5132] flex items-center justify-center gap-1.5 sticky top-0 z-10 border-r border-[#0a3d26] last:border-r-0">
-        <div className={`w-2 h-2 rounded-full ${
-          court.status === 'occupied' ? 'bg-amber-400 animate-pulse' :
-          court.isMaintenanceMode ? 'bg-red-400' :
-          !court.isEnabled ? 'bg-gray-400' :
-          'bg-emerald-400'
-        }`} />
         <span className="text-white font-bold text-sm">{court.name}</span>
       </div>
 
-      {/* Grid body */}
-      <div style={{ position: 'relative', height: NUM_SLOTS * SLOT_H }}>
+      <div style={{ position: 'relative', height: NUM_SLOTS * SLOT_H }} className="bg-gray-50/20">
 
         {/* Hour slot grid lines */}
         {SLOT_HOURS.map((hour, i) => (
@@ -643,7 +764,7 @@ function CourtColumn({ court, dayBookings, currentTimeTop, onBook, onBookingClic
           />
         ))}
 
-        {/* Current time red line (only on today's column) */}
+        {/* Current time red line */}
         {currentTimeTop !== null && (
           <div
             style={{ position: 'absolute', top: currentTimeTop, left: 0, right: 0, zIndex: 6 }}
@@ -672,24 +793,21 @@ function CourtColumn({ court, dayBookings, currentTimeTop, onBook, onBookingClic
           </div>
         )}
 
-        {/* Book buttons for empty slots */}
-        {court.isEnabled && !court.isMaintenanceMode && SLOT_HOURS.map((hour, i) => {
-          if (occupiedHours.has(hour)) return null;
-          return (
-            <button
-              key={hour}
-              onClick={() => onBook(court.id, hour)}
-              style={{ position: 'absolute', top: i * SLOT_H + 3, left: 3, right: 3, height: SLOT_H - 6, zIndex: 4 }}
-              className="rounded-xl border-2 border-dashed border-emerald-200 bg-transparent hover:bg-emerald-50 hover:border-emerald-400 transition-all duration-150 group flex items-center justify-center"
-            >
-              <span className="flex items-center gap-1 text-xs font-semibold text-emerald-500 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Plus size={13} /> Book
-              </span>
-            </button>
-          );
-        })}
+        {/* Hover Book Buttons on Slot Rows */}
+        {court.isEnabled && !court.isMaintenanceMode && SLOT_HOURS.map((hour, i) => (
+          <button
+            key={hour}
+            onClick={() => onBook(court.id, hour)}
+            style={{ position: 'absolute', top: i * SLOT_H + 2, left: 2, right: 2, height: SLOT_H - 4, zIndex: 4 }}
+            className="rounded-xl border border-transparent hover:border-emerald-300 hover:bg-emerald-50/30 transition-all duration-100 group flex items-start p-1.5"
+          >
+            <span className="text-[10px] font-bold text-emerald-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+              <Plus size={10} /> Book {fmtHourShort(hour)}
+            </span>
+          </button>
+        ))}
 
-        {/* Booking cards */}
+        {/* Booking cards rendered proportionally */}
         <AnimatePresence>
           {courtBookings.map(b => (
             <BookingCard key={b.id} booking={b} onClick={() => onBookingClick(b)} />
@@ -717,11 +835,11 @@ export default function Courts() {
   const [checkoutCourtId, setCheckoutCourtId] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [, setTick] = useState(0);
+  const [now, setNow] = useState(new Date());
 
-  // Refresh every 60s for current-time indicator
+  // Refresh every 15s to update current-time line position and sync ongoing game cards
   useEffect(() => {
-    const t = setInterval(() => setTick(x => x + 1), 60000);
+    const t = setInterval(() => setNow(new Date()), 15000);
     return () => clearInterval(t);
   }, []);
 
@@ -729,7 +847,6 @@ export default function Courts() {
   useEffect(() => {
     const isToday = dateKey(new Date()) === dateKey(selectedDate);
     if (!isToday || !scrollRef.current) return;
-    const now = new Date();
     const offset = Math.max(0, (now.getHours() - START_H - 1.5) * SLOT_H);
     requestAnimationFrame(() => {
       if (scrollRef.current) scrollRef.current.scrollTop = offset;
@@ -745,7 +862,6 @@ export default function Courts() {
   );
 
   // Current time indicator position (px from top of grid)
-  const now = new Date();
   const nowOffsetMinutes = (now.getHours() - START_H) * 60 + now.getMinutes();
   const currentTimeTop = isToday && nowOffsetMinutes >= 0 && nowOffsetMinutes <= NUM_SLOTS * 60
     ? (nowOffsetMinutes / 60) * SLOT_H
@@ -757,7 +873,8 @@ export default function Courts() {
 
   const openEdit = useCallback((b: Booking) => {
     setDetailModal({ open: false, booking: null });
-    setCreateModal({ open: true, courtId: b.courtId, startHour: new Date(b.startTime).getHours(), editBooking: b });
+    const start = new Date(b.startTime);
+    setCreateModal({ open: true, courtId: b.courtId, startHour: start.getHours(), editBooking: b });
   }, []);
 
   const openCheckout = useCallback((courtId: string) => {
@@ -765,8 +882,17 @@ export default function Courts() {
     setCheckoutCourtId(courtId);
   }, []);
 
-  // Stats for header
-  const occupiedCount = courts.filter(c => c.status === 'occupied').length;
+  // Stats header calculation
+  const getLiveStatus = (court: Court) => {
+    if (court.isMaintenanceMode) return 'maintenance';
+    if (!court.isEnabled) return 'disabled';
+    const isOccupied = bookings.some(
+      (b) => b.courtId === court.id && b.status === 'active' && new Date(b.startTime) <= now && new Date(b.endTime) > now
+    );
+    return isOccupied ? 'occupied' : 'available';
+  };
+
+  const occupiedCount = courts.filter(c => getLiveStatus(c) === 'occupied').length;
   const todayBookingCount = dayBookings.length;
 
   return (
@@ -790,7 +916,7 @@ export default function Courts() {
                 <span className="hidden sm:inline">{fmtDayLabel(selectedDate)}</span>
                 <span className="sm:hidden">{selectedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
               </span>
-              <span className="text-xs text-gray-400">{todayBookingCount} booking{todayBookingCount !== 1 ? 's' : ''} · {occupiedCount} court{occupiedCount !== 1 ? 's' : ''} occupied</span>
+              <span className="text-xs text-gray-400">{todayBookingCount} booking{todayBookingCount !== 1 ? 's' : ''} · {occupiedCount} live match{occupiedCount !== 1 ? 'es' : ''}</span>
             </div>
 
             <button
@@ -863,12 +989,10 @@ export default function Courts() {
 
           {/* ── TIME COLUMN (sticky left) ── */}
           <div className="w-[72px] sm:w-20 flex-shrink-0 bg-white border-r border-gray-100 sticky left-0 z-10">
-            {/* Header spacer */}
             <div className="h-10 border-b border-gray-100 bg-[#0a3d26] flex items-center justify-center">
               <Clock size={13} className="text-green-400" />
             </div>
 
-            {/* Time labels */}
             <div style={{ position: 'relative', height: NUM_SLOTS * SLOT_H }}>
               {[...SLOT_HOURS, END_H].map((hour, i) => (
                 <div
@@ -888,7 +1012,6 @@ export default function Courts() {
                   </span>
                 </div>
               ))}
-              {/* Horizontal grid lines to match court columns */}
               {SLOT_HOURS.map((_, i) => (
                 <div
                   key={i}
@@ -921,12 +1044,12 @@ export default function Courts() {
 
       {/* ── LEGEND BAR (Desktop footer) ── */}
       <div className="hidden sm:flex items-center gap-5 px-4 py-2 bg-white border-t border-gray-100 flex-shrink-0 text-xs text-gray-500">
-        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded border-2 border-dashed border-emerald-400 bg-emerald-50" />Available</div>
+        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded border border-gray-200" />Available</div>
         <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-blue-500" />Booked</div>
-        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-amber-400" />Current Game</div>
+        <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-amber-400" />Live Match</div>
         <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-[#0F5132]" />Paid</div>
         <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-gray-400" />Past</div>
-        <div className="flex items-center gap-1.5"><div className="w-0.5 h-3 bg-red-500" />Current Time</div>
+        <div className="flex items-center gap-1.5"><div className="w-full h-0.5 bg-red-500" style={{ width: '12px' }} />Current Time</div>
       </div>
 
       {/* ── MODALS ── */}
@@ -939,6 +1062,7 @@ export default function Courts() {
             startHour={createModal.startHour}
             selectedDate={selectedDate}
             editBooking={createModal.editBooking}
+            bookingsList={bookings}
           />
         )}
       </AnimatePresence>
@@ -948,6 +1072,7 @@ export default function Courts() {
           <BookingDetailModal
             booking={detailModal.booking}
             courts={courts}
+            bookingsList={bookings}
             onClose={() => setDetailModal({ open: false, booking: null })}
             onEdit={openEdit}
             onCheckout={openCheckout}

@@ -1,4 +1,5 @@
 // src/pages/Dashboard.tsx
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   IndianRupee, Calendar, CheckCircle, Circle,
@@ -7,6 +8,7 @@ import {
 import { useStore } from '@/store/useStore';
 import { formatCurrency, getTimeAgo } from '@/utils';
 import { useNavigate } from 'react-router-dom';
+import type { Court } from '@/types';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -19,15 +21,31 @@ export default function Dashboard() {
     completedCheckouts, tasks
   } = useStore();
   const navigate = useNavigate();
+  const [now, setNow] = useState(new Date());
 
-  const occupied = courts.filter((c) => c.status === 'occupied').length;
-  const available = courts.filter((c) => c.status === 'available').length;
+  // Auto-refresh stats every 15 seconds to sync live court status dynamically
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const getLiveStatus = (court: Court) => {
+    if (court.isMaintenanceMode) return 'maintenance';
+    if (!court.isEnabled) return 'disabled';
+    const isOccupied = bookings.some(
+      (b) => b.courtId === court.id && b.status === 'active' && new Date(b.startTime) <= now && new Date(b.endTime) > now
+    );
+    return isOccupied ? 'occupied' : 'available';
+  };
+
+  const occupied = courts.filter((c) => getLiveStatus(c) === 'occupied').length;
+  const available = courts.filter((c) => getLiveStatus(c) === 'available').length;
   const todayBookings = bookings.filter(
-    (b) => new Date(b.createdAt).toDateString() === new Date().toDateString()
+    (b) => new Date(b.createdAt).toDateString() === now.toDateString()
   ).length;
   const todayRevenue = completedCheckouts.reduce((s, c) => s + c.grandTotal, 0);
   const lowStock = getLowStockItems();
-  const pendingPayments = courts.filter((c) => c.status === 'occupied').length;
+  const pendingPayments = bookings.filter((b) => b.status === 'active' && b.paymentStatus === 'unpaid').length;
   const openTasks = tasks.filter((t) => !t.completed).length;
 
   const stats = [
@@ -69,7 +87,7 @@ export default function Dashboard() {
       icon: Clock,
       color: 'bg-amber-50 text-amber-600',
       iconBg: 'bg-amber-100',
-      sub: 'active sessions',
+      sub: 'unpaid bookings',
     },
     {
       label: 'Low Stock Items',
@@ -94,12 +112,12 @@ export default function Dashboard() {
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Welcome */}
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-        <h2 className="text-xl font-bold text-gray-900">Good {getGreeting()}, Admin 👋</h2>
+        <h2 className="text-xl font-bold text-gray-900">Good {getGreeting(now)}, Admin 👋</h2>
         <p className="text-gray-500 text-sm">Here's what's happening at The Courtyard today.</p>
       </motion.div>
 
-      {/* Stat Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+      {/* Stats Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         {stats.map((stat, i) => (
           <motion.div
             key={stat.label}
@@ -107,48 +125,48 @@ export default function Dashboard() {
             variants={fadeUp}
             initial="hidden"
             animate="show"
-            className="card hover:shadow-md transition-shadow"
+            className="card flex flex-col justify-between"
           >
-            <div className={`w-9 h-9 ${stat.iconBg} rounded-lg flex items-center justify-center mb-3`}>
-              <stat.icon size={18} className={stat.color.split(' ')[1]} />
+            <div className="flex items-start justify-between">
+              <div className={`p-2.5 rounded-xl ${stat.color} ${stat.iconBg}`}>
+                <stat.icon size={20} />
+              </div>
+              <span className="text-2xl font-black text-gray-900 leading-none">{stat.value}</span>
             </div>
-            <div className="text-2xl font-bold text-gray-900">{stat.value}</div>
-            <div className="text-xs font-medium text-gray-700 mt-0.5">{stat.label}</div>
-            <div className="text-xs text-gray-400 mt-0.5">{stat.sub}</div>
+            <div className="mt-3">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{stat.label}</p>
+              <p className="text-xs text-gray-500 font-medium mt-0.5">{stat.sub}</p>
+            </div>
           </motion.div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* Quick Actions */}
+      {/* Quick Actions */}
+      <div>
+        <h3 className="font-bold text-gray-900 mb-3">Quick Actions</h3>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {quickActions.map((action, i) => (
+            <motion.button
+              key={action.label}
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: i * 0.05 }}
+              onClick={() => navigate(action.to)}
+              className={`p-4 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer transition-transform hover:-translate-y-0.5 shadow-sm font-semibold ${action.color}`}
+            >
+              <action.icon size={20} />
+              <span className="text-xs">{action.label}</span>
+            </motion.button>
+          ))}
+        </div>
+      </div>
+
+      {/* Main Sections */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Court Status */}
         <motion.div
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.3 }}
-          className="card"
-        >
-          <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Zap size={16} className="text-[#0F5132]" />
-            Quick Actions
-          </h3>
-          <div className="grid grid-cols-2 gap-2">
-            {quickActions.map(({ label, icon: Icon, to, color }) => (
-              <button
-                key={to}
-                onClick={() => navigate(to)}
-                className={`${color} rounded-xl p-3 flex flex-col items-center gap-2 hover:opacity-90 transition-all duration-200 active:scale-95`}
-              >
-                <Icon size={20} />
-                <span className="text-xs font-medium text-center leading-tight">{label}</span>
-              </button>
-            ))}
-          </div>
-        </motion.div>
-
-        {/* Court Status */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.35 }}
           className="card"
         >
@@ -158,20 +176,26 @@ export default function Dashboard() {
           </h3>
           <div className="space-y-3">
             {courts.map((court) => {
-              const booking = bookings.find(
-                (b) => b.courtId === court.id && b.status === 'active'
+              const liveStatus = getLiveStatus(court);
+              const activeBooking = bookings.find(
+                (b) => b.courtId === court.id && b.status === 'active' && new Date(b.startTime) <= now && new Date(b.endTime) > now
               );
               return (
                 <div key={court.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
                   <div>
                     <p className="font-semibold text-sm text-gray-900">{court.name}</p>
                     <p className="text-xs text-gray-500">
-                      {booking ? booking.customerName : 'No booking'}
+                      {activeBooking ? `${activeBooking.customerName} (Ongoing)` : 'No active game'}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${court.status === 'occupied' ? 'bg-red-100 text-red-700' : court.status === 'maintenance' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                      {court.status}
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                      liveStatus === 'occupied' ? 'bg-amber-100 text-amber-800' :
+                      liveStatus === 'maintenance' ? 'bg-red-100 text-red-700' :
+                      liveStatus === 'disabled' ? 'bg-gray-200 text-gray-600' :
+                      'bg-emerald-100 text-emerald-700'
+                    }`}>
+                      {liveStatus === 'occupied' ? 'live match' : liveStatus}
                     </span>
                   </div>
                 </div>
@@ -212,6 +236,9 @@ export default function Dashboard() {
                 </div>
               </div>
             ))}
+            {activityLog.length === 0 && (
+              <p className="text-xs text-gray-400 text-center py-4">No recent activity</p>
+            )}
           </div>
         </motion.div>
       </div>
@@ -243,8 +270,8 @@ export default function Dashboard() {
   );
 }
 
-function getGreeting() {
-  const h = new Date().getHours();
+function getGreeting(date: Date) {
+  const h = date.getHours();
   if (h < 12) return 'morning';
   if (h < 17) return 'afternoon';
   return 'evening';
