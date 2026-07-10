@@ -1,0 +1,182 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #0F5132;
+  --color-primary-light: #166534;
+  --color-primary-dark: #0a3d26;
+  --color-accent: #10B981;
+  --color-accent-light: #34D399;
+  --color-surface: #ffffff;
+  --color-bg: #F3F4F6;
+  --color-muted: #6B7280;
+  --color-border: #E5E7EB;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-success: #10B981;
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background-color: #F3F4F6;
+    color: #111827;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #f1f1f1; }
+  ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+}
+
+@layer components {
+  .card {
+    background: white;
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.07);
+    border: 1px solid #f3f4f6;
+    padding: 1rem;
+  }
+
+  .btn-primary {
+    background: #0F5132;
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    font-size: 0.875rem;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .btn-primary:hover { background: #166534; }
+  .btn-primary:active { transform: scale(0.97); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-secondary {
+    background: white;
+    color: #0F5132;
+    border: 1px solid #0F5132;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .btn-secondary:hover { background: #f0fdf4; }
+  .btn-secondary:active { transform: scale(0.97); }
+
+  .btn-danger {
+    background: #EF4444;
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    font-size: 0.875rem;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .btn-danger:hover { background: #DC2626; }
+  .btn-danger:active { transform: scale(0.97); }
+
+  .btn-ghost {
+    background: transparent;
+    color: #4B5563;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    font-size: 0.875rem;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .btn-ghost:hover { background: #F3F4F6; }
+
+  .input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #E5E7EB;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    outline: none;
+    transition: all 0.2s;
+    background: white;
+    color: #111827;
+    font-family: inherit;
+  }
+  .input:focus {
+    border-color: #0F5132;
+    box-shadow: 0 0 0 3px rgb(15 81 50 / 0.15);
+  }
+
+  .label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #374151;
+    margin-bottom: 0.25rem;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .badge-available {
+    background: #D1FAE5;
+    color: #065F46;
+  }
+
+  .badge-occupied {
+    background: #FEE2E2;
+    color: #991B1B;
+  }
+
+  .badge-maintenance {
+    background: #FEF3C7;
+    color: #92400E;
+  }
+
+  .sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.625rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #bbf7d0;
+    text-decoration: none;
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+  .sidebar-link:hover {
+    background: rgba(255,255,255,0.1);
+    color: white;
+  }
+  .sidebar-link.active {
+    background: #10B981;
+    color: white;
+  }
+}
