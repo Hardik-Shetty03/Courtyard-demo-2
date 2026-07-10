@@ -11,6 +11,7 @@ import POS from '@/pages/POS';
 import Inventory from '@/pages/Inventory';
 import DailyTasks from '@/pages/DailyTasks';
 import Settings from '@/pages/Settings';
+import StatusChecker from '@/pages/StatusChecker';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoggedIn } = useStore();
@@ -34,6 +35,7 @@ export default function App() {
           <Route index element={<Navigate to="/courts" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="courts" element={<Courts />} />
+          <Route path="status-checker" element={<StatusChecker />} />
           <Route path="live-courts" element={<LiveCourts />} />
           <Route path="court-tabs" element={<CourtTabs />} />
           <Route path="pos" element={<POS />} />

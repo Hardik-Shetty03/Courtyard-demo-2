@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { formatCurrency, formatTime } from '@/utils';
+import { useLocation } from 'react-router-dom';
 import type { Booking, Court } from '@/types';
 import CheckoutModal from '@/components/checkout/CheckoutModal';
 
@@ -419,12 +420,15 @@ interface CreateModalProps {
   onClose: () => void;
   courtId: string;
   startHour: number;
+  startMinute: number;
+  endHour: number;
+  endMinute: number;
   selectedDate: Date;
   editBooking: Booking | null;
   bookingsList: Booking[];
 }
 
-function CreateBookingModal({ open, onClose, courtId, startHour, selectedDate, editBooking, bookingsList }: CreateModalProps) {
+function CreateBookingModal({ open, onClose, courtId, startHour, startMinute, endHour, endMinute, selectedDate, editBooking, bookingsList }: CreateModalProps) {
   const { courts, createBooking, updateBooking } = useStore();
   const enabledCourts = courts.filter(c => c.isEnabled && !c.isMaintenanceMode);
 
@@ -434,9 +438,9 @@ function CreateBookingModal({ open, onClose, courtId, startHour, selectedDate, e
     numberOfPlayers: 2,
     courtId: courtId,
     startHour: startHour,
-    startMinute: 0,
-    endHour: startHour + 1,
-    endMinute: 0,
+    startMinute: startMinute,
+    endHour: endHour,
+    endMinute: endMinute,
     notes: '',
   });
 
@@ -463,13 +467,13 @@ function CreateBookingModal({ open, onClose, courtId, startHour, selectedDate, e
         numberOfPlayers: 2,
         courtId,
         startHour,
-        startMinute: 0,
-        endHour: Math.min(23, startHour + 1),
-        endMinute: 0,
+        startMinute,
+        endHour,
+        endMinute,
         notes: '',
       });
     }
-  }, [open, editBooking, courtId, startHour]);
+  }, [open, editBooking, courtId, startHour, startMinute, endHour, endMinute]);
 
   const startD = new Date(selectedDate);
   startD.setHours(form.startHour, form.startMinute, 0, 0);
@@ -827,7 +831,13 @@ export default function Courts() {
   const [mobileCourt, setMobileCourt] = useState(0);
 
   const [createModal, setCreateModal] = useState({
-    open: false, courtId: '', startHour: 8, editBooking: null as Booking | null,
+    open: false,
+    courtId: '',
+    startHour: 8,
+    startMinute: 0,
+    endHour: 9,
+    endMinute: 0,
+    editBooking: null as Booking | null,
   });
   const [detailModal, setDetailModal] = useState<{ open: boolean; booking: Booking | null }>({
     open: false, booking: null,
@@ -856,6 +866,29 @@ export default function Courts() {
   const dayKey = dateKey(selectedDate);
   const isToday = dateKey(new Date()) === dayKey;
 
+  const location = useLocation();
+  const prefilledChecked = useRef(false);
+
+  useEffect(() => {
+    if (prefilledChecked.current) return;
+    const prefill = location.state?.prefill;
+    if (prefill) {
+      prefilledChecked.current = true;
+      const prefDate = new Date(prefill.date);
+      setSelectedDate(prefDate);
+      setCreateModal({
+        open: true,
+        courtId: prefill.courtId,
+        startHour: prefill.startHour,
+        startMinute: prefill.startMinute,
+        endHour: prefill.endHour,
+        endMinute: prefill.endMinute,
+        editBooking: null
+      });
+      window.history.replaceState({}, document.title);
+    }
+  }, [location]);
+
   // Filter active bookings for selected date
   const dayBookings = bookings.filter(b =>
     b.status !== 'cancelled' && dateKey(new Date(b.startTime)) === dayKey
@@ -868,13 +901,30 @@ export default function Courts() {
     : null;
 
   const openBook = useCallback((courtId: string, startHour: number) => {
-    setCreateModal({ open: true, courtId, startHour, editBooking: null });
+    setCreateModal({
+      open: true,
+      courtId,
+      startHour,
+      startMinute: 0,
+      endHour: Math.min(23, startHour + 1),
+      endMinute: 0,
+      editBooking: null
+    });
   }, []);
 
   const openEdit = useCallback((b: Booking) => {
     setDetailModal({ open: false, booking: null });
     const start = new Date(b.startTime);
-    setCreateModal({ open: true, courtId: b.courtId, startHour: start.getHours(), editBooking: b });
+    const end = new Date(b.endTime);
+    setCreateModal({
+      open: true,
+      courtId: b.courtId,
+      startHour: start.getHours(),
+      startMinute: start.getMinutes(),
+      endHour: end.getHours(),
+      endMinute: end.getMinutes(),
+      editBooking: b
+    });
   }, []);
 
   const openCheckout = useCallback((courtId: string) => {
@@ -1060,6 +1110,9 @@ export default function Courts() {
             onClose={() => setCreateModal(s => ({ ...s, open: false }))}
             courtId={createModal.courtId}
             startHour={createModal.startHour}
+            startMinute={createModal.startMinute}
+            endHour={createModal.endHour}
+            endMinute={createModal.endMinute}
             selectedDate={selectedDate}
             editBooking={createModal.editBooking}
             bookingsList={bookings}
