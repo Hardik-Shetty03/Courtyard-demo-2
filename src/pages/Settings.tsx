@@ -2,14 +2,15 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Settings as SettingsIcon, MapPin, Tag, Pencil, Plus, Trash2, X, ToggleLeft, ToggleRight, Wrench
+  Settings as SettingsIcon, MapPin, Tag, Pencil, Plus, Trash2, X, ToggleLeft, ToggleRight, Wrench, FileText, Download
 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { formatCurrency } from '@/utils';
 import type { DiscountType } from '@/types';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function Settings() {
-  const { courts, updateCourt, addCourt, deleteCourt, discounts, addDiscountType, updateDiscountType, deleteDiscountType, settings, updateSettings, clearAllData } = useStore();
+  const { courts, updateCourt, addCourt, deleteCourt, discounts, addDiscountType, updateDiscountType, deleteDiscountType, settings, updateSettings, clearAllData, bookings, inventory } = useStore();
   const [editCourtId, setEditCourtId] = useState<string | null>(null);
   const [courtForm, setCourtForm] = useState({ name: '', hourlyRate: 0 });
   const [discountModal, setDiscountModal] = useState(false);
@@ -17,9 +18,119 @@ export default function Settings() {
   const [newCourtForm, setNewCourtForm] = useState({ name: '', hourlyRate: 500, color: '#0F5132' });
   const [editDiscount, setEditDiscount] = useState<DiscountType | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [reportDates, setReportDates] = useState({
+    startDate: new Date().toISOString().split('T')[0],
+    endDate: new Date().toISOString().split('T')[0]
+  });
   const [discForm, setDiscForm] = useState<Omit<DiscountType, 'id'>>({
     name: '', type: 'percentage', value: 0, isActive: true,
   });
+
+  const handleExportReport = async () => {
+    const start = new Date(reportDates.startDate);
+    const end = new Date(reportDates.endDate);
+    
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    if (start > end) {
+      alert("Error: Start date must be before or equal to End date.");
+      return;
+    }
+
+    const diffTime = Math.abs(end.getTime() - start.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays > 50) {
+      alert("Error: The report date range cannot exceed 50 days. Current range: " + diffDays + " days.");
+      return;
+    }
+
+    const { data: dbTabs, error: tabErr } = await supabase
+      .from('court_tabs')
+      .select('*, tab_items(*)');
+
+    if (tabErr) {
+      alert("Error fetching tab data: " + tabErr.message);
+      return;
+    }
+
+    const filteredBookings = bookings.filter(b => {
+      if (b.paymentStatus !== 'paid') return false;
+      const bTime = new Date(b.startTime).getTime();
+      return bTime >= start.getTime() && bTime <= end.getTime();
+    });
+
+    if (filteredBookings.length === 0) {
+      alert("No paid bookings found in the selected date range.");
+      return;
+    }
+
+    let csvContent = "Date,Booking ID,Customer Name,Court Name,Court Revenue (INR),Drinks Revenue (INR),Food & Equipment Revenue (INR),Discount Applied (INR),Net Revenue (INR),Payment Method\n";
+
+    let totalCourt = 0;
+    let totalDrinks = 0;
+    let totalFood = 0;
+    let totalDiscount = 0;
+    let totalNet = 0;
+
+    filteredBookings.forEach(b => {
+      const court = courts.find(c => c.id === b.courtId);
+      const relatedTab = dbTabs?.find(t => t.booking_id === b.id);
+      
+      let drinksRev = 0;
+      let foodRev = 0;
+
+      if (relatedTab && relatedTab.tab_items) {
+        relatedTab.tab_items.forEach((item: any) => {
+          const invItem = inventory.find(i => i.id === item.inventory_item_id);
+          const category = invItem ? invItem.category : 'other';
+          const itemTotal = Number(item.quantity) * Number(item.unit_price);
+          
+          if (category === 'drinks') {
+            drinksRev += itemTotal;
+          } else {
+            foodRev += itemTotal;
+          }
+        });
+      }
+
+      const courtCharge = b.totalCharge;
+      const subtotal = courtCharge + drinksRev + foodRev;
+
+      let discountAmount = 0;
+      if (relatedTab && relatedTab.discount_name) {
+        const dVal = Number(relatedTab.discount_value);
+        if (relatedTab.discount_type === 'percentage') {
+          discountAmount = (subtotal * dVal) / 100;
+        } else {
+          discountAmount = dVal;
+        }
+      }
+
+      const netRevenue = Math.max(0, subtotal - discountAmount);
+      const bookingDate = new Date(b.startTime).toLocaleDateString('en-IN');
+
+      totalCourt += courtCharge;
+      totalDrinks += drinksRev;
+      totalFood += foodRev;
+      totalDiscount += discountAmount;
+      totalNet += netRevenue;
+
+      csvContent += `"${bookingDate}","${b.id}","${b.customerName.replace(/"/g, '""')}","${court ? court.name : 'Unknown'}",${courtCharge},${drinksRev},${foodRev},${discountAmount},${netRevenue},"${b.paymentMethod || 'UPI'}"\n`;
+    });
+
+    csvContent += `\n"TOTALS",,,,"${totalCourt}","${totalDrinks}","${totalFood}","${totalDiscount}","${totalNet}",\n`;
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Revenue_Report_${reportDates.startDate}_to_${reportDates.endDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const openCourtEdit = (courtId: string) => {
     const court = courts.find((c) => c.id === courtId);
@@ -231,6 +342,44 @@ export default function Settings() {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* Revenue Reports Export Section */}
+      <section className="card space-y-4">
+        <h3 className="font-bold text-gray-900 flex items-center gap-2">
+          <FileText size={16} className="text-[#0F5132]" />
+          Revenue Reports Export
+        </h3>
+        <p className="text-xs text-gray-500">
+          Export detailed financial spreadsheets broken down by Court, Drinks, and Food/Equipment revenue. Date ranges are capped at a maximum of 50 days.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="label">Start Date</label>
+            <input
+              type="date"
+              value={reportDates.startDate}
+              onChange={(e) => setReportDates({ ...reportDates, startDate: e.target.value })}
+              className="input bg-white border-gray-200"
+            />
+          </div>
+          <div>
+            <label className="label">End Date</label>
+            <input
+              type="date"
+              value={reportDates.endDate}
+              onChange={(e) => setReportDates({ ...reportDates, endDate: e.target.value })}
+              className="input bg-white border-gray-200"
+            />
+          </div>
+        </div>
+        <button
+          onClick={handleExportReport}
+          className="btn-primary w-full py-2.5 flex items-center justify-center gap-2"
+        >
+          <Download size={15} />
+          Export to Excel (CSV)
+        </button>
       </section>
 
       {/* System Reset Section */}
