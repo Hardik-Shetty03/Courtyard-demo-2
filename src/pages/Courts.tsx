@@ -183,10 +183,11 @@ interface DetailModalProps {
 }
 
 function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, onCheckout }: DetailModalProps) {
-  const { cancelBooking, extendBooking, moveBooking, markPaid, getTabTotal } = useStore();
+  const { cancelBooking, extendBooking, moveBooking, markPaid, getTabTotal, discounts } = useStore();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showMovePanel, setShowMovePanel] = useState(false);
   const [showPaymentMethodConfirm, setShowPaymentMethodConfirm] = useState(false);
+  const [selectedDiscountId, setSelectedDiscountId] = useState<string>('none');
 
   const court = courts.find(c => c.id === booking.courtId);
   const startDate = new Date(booking.startTime);
@@ -195,6 +196,16 @@ function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, on
   const tabTotal  = getTabTotal(booking.courtId);
   const courtCharge = booking.totalCharge;
   const runningTotal = courtCharge + tabTotal;
+
+  const activeDiscounts = discounts.filter(d => d.isActive);
+  const selectedDiscount = activeDiscounts.find(d => d.id === selectedDiscountId);
+  let discountAmount = 0;
+  if (selectedDiscount) {
+    discountAmount = selectedDiscount.type === 'percentage'
+      ? (courtCharge * selectedDiscount.value) / 100
+      : selectedDiscount.value;
+  }
+  const finalTotal = Math.max(0, courtCharge + tabTotal - discountAmount);
 
   const otherCourts = courts.filter(c => c.id !== booking.courtId && c.isEnabled && !c.isMaintenanceMode);
 
@@ -281,6 +292,14 @@ function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, on
   }
 
   if (showPaymentMethodConfirm) {
+    const appliedDiscount = selectedDiscount ? {
+      discountTypeId: selectedDiscount.id,
+      name: selectedDiscount.name,
+      type: selectedDiscount.type,
+      value: selectedDiscount.value,
+      amount: discountAmount,
+    } : null;
+
     return (
       <ModalShell onClose={onClose}>
         <div className="p-6 text-center space-y-4">
@@ -291,20 +310,58 @@ function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, on
           <p className="text-gray-500 text-sm">
             Select the payment method used by <span className="font-semibold">{booking.customerName}</span>:
           </p>
-          <div className="bg-gray-50 rounded-xl p-3 border border-gray-100 flex justify-between items-center text-sm mb-4">
-            <span className="text-gray-500 font-medium">Amount Due:</span>
-            <span className="font-bold text-[#0F5132] text-base">{formatCurrency(runningTotal)}</span>
+
+          {/* Discount / Offer Selection */}
+          <div className="text-left space-y-1">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Select Discount / Offer</label>
+            <select
+              value={selectedDiscountId}
+              onChange={(e) => setSelectedDiscountId(e.target.value)}
+              className="input bg-white border-gray-200 text-sm"
+            >
+              <option value="none">No Discount / Full Payment</option>
+              {activeDiscounts.map(d => (
+                <option key={d.id} value={d.id}>
+                  {d.name} ({d.type === 'percentage' ? `${d.value}%` : `₹${d.value}`} off)
+                </option>
+              ))}
+            </select>
           </div>
+
+          {/* Breakdown display */}
+          <div className="bg-gray-50 rounded-xl p-3.5 border border-gray-100 text-sm space-y-1.5 text-left">
+            <div className="flex justify-between items-center text-xs text-gray-500">
+              <span>Court Charge:</span>
+              <span className="font-medium text-gray-800">{formatCurrency(courtCharge)}</span>
+            </div>
+            {tabTotal > 0 && (
+              <div className="flex justify-between items-center text-xs text-gray-500">
+                <span>Food & Drink Tab:</span>
+                <span className="font-medium text-gray-800">{formatCurrency(tabTotal)}</span>
+              </div>
+            )}
+            {discountAmount > 0 && (
+              <div className="flex justify-between items-center text-xs text-red-600 font-medium">
+                <span>Offer ({selectedDiscount?.name}):</span>
+                <span>-{formatCurrency(discountAmount)}</span>
+              </div>
+            )}
+            <div className="border-t border-gray-200 pt-1.5 flex justify-between items-center font-bold text-gray-900">
+              <span>Amount Due:</span>
+              <span className="text-[#0F5132] text-base">{formatCurrency(finalTotal)}</span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <button
-              onClick={() => { markPaid(booking.id, 'online'); onClose(); }}
+              onClick={() => { markPaid(booking.id, 'online', appliedDiscount); onClose(); }}
               className="flex flex-col items-center justify-center gap-2 p-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl font-semibold transition-all cursor-pointer hover:-translate-y-0.5"
             >
               <span className="text-xl">📱</span>
               <span className="text-xs">Online / UPI</span>
             </button>
             <button
-              onClick={() => { markPaid(booking.id, 'cash'); onClose(); }}
+              onClick={() => { markPaid(booking.id, 'cash', appliedDiscount); onClose(); }}
               className="flex flex-col items-center justify-center gap-2 p-4 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 rounded-xl font-semibold transition-all cursor-pointer hover:-translate-y-0.5"
             >
               <span className="text-xl">💵</span>

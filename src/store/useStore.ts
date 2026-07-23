@@ -61,7 +61,7 @@ interface AppState {
   cancelBooking: (bookingId: string) => Promise<void>;
   extendBooking: (bookingId: string, additionalHours: number) => Promise<void>;
   moveBooking: (bookingId: string, newCourtId: string) => Promise<void>;
-  markPaid: (bookingId: string, paymentMethod: 'online' | 'cash') => Promise<void>;
+  markPaid: (bookingId: string, paymentMethod: 'online' | 'cash', discount?: DiscountApplication | null) => Promise<void>;
 
   // Tabs
   addItemToTab: (courtId: string, item: Omit<TabItem, 'id'>) => Promise<void>;
@@ -575,20 +575,35 @@ export const useStore = create<AppState>()(
         }
       },
 
-      markPaid: async (bookingId, paymentMethod) => {
+      markPaid: async (bookingId, paymentMethod, discount = null) => {
         const booking = get().bookings.find((b) => b.id === bookingId);
         if (!booking) return;
 
-        const updatedBooking = { ...booking, paymentStatus: 'paid' as const, paymentMethod };
+        let discountAmount = 0;
+        if (discount) {
+          discountAmount = discount.type === 'percentage'
+            ? (booking.totalCharge * discount.value) / 100
+            : discount.value;
+        }
+
+        const discountedCharge = Math.max(0, booking.totalCharge - discountAmount);
+
+        const updatedBooking = { 
+          ...booking, 
+          paymentStatus: 'paid' as const, 
+          paymentMethod,
+          totalCharge: discountedCharge
+        };
+
         const newCheckout: CheckoutData = {
           courtId: booking.courtId,
           bookingId: booking.id,
-          courtCharge: booking.totalCharge,
+          courtCharge: discountedCharge,
           foodAndDrinks: 0,
-          discount: null,
+          discount: discount,
           extraCharges: 0,
           extraChargesNote: '',
-          grandTotal: booking.totalCharge,
+          grandTotal: discountedCharge,
           paymentMethod: paymentMethod === 'online' ? 'upi' : 'cash',
         };
 
@@ -601,7 +616,7 @@ export const useStore = create<AppState>()(
 
         if (booking) {
           get().addActivity({
-            message: `Booking paid via ${paymentMethod === 'online' ? 'Online / UPI' : 'Cash'}: ${booking.customerName}`,
+            message: `Booking paid via ${paymentMethod === 'online' ? 'Online / UPI' : 'Cash'}: ${booking.customerName} (Discount: ${discount ? discount.name : 'None'})`,
             type: 'checkout',
           });
         }
@@ -609,10 +624,20 @@ export const useStore = create<AppState>()(
         const { error } = await supabase.from('bookings').update({
           payment_status: 'paid',
           payment_method: paymentMethod,
+          total_charge: discountedCharge,
         }).eq('id', bookingId);
         if (error) {
           console.error('Supabase markPaid error:', error);
           alert(`Database Error (markPaid): ${error.message}`);
+        }
+
+        const { error: te } = await supabase.from('court_tabs').update({
+          discount_name: discount ? discount.name : null,
+          discount_value: discount ? discount.value : null,
+          discount_type: discount ? discount.type : null,
+        }).eq('booking_id', bookingId).eq('status', 'open');
+        if (te) {
+          console.error('Supabase markPaid tab discount error:', te);
         }
       },
 
