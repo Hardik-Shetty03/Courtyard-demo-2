@@ -66,7 +66,7 @@ export default function Settings() {
       return;
     }
 
-    let csvContent = "Date,Booking ID,Customer Name,Court Name,Court Revenue (INR),Drinks Revenue (INR),Food & Equipment Revenue (INR),Discount Applied (INR),Net Revenue (INR),Payment Method\n";
+    let csvContent = "Date,Phone Number,Customer Name,Court Name,Court Revenue (INR),Drinks Revenue (INR),Food & Equipment Revenue (INR),Discount Applied (INR),Net Revenue (INR),Payment Method\n";
 
     let totalCourt = 0;
     let totalDrinks = 0;
@@ -109,7 +109,8 @@ export default function Settings() {
       }
 
       const netRevenue = Math.max(0, subtotal - discountAmount);
-      const bookingDate = new Date(b.startTime).toLocaleDateString('en-IN');
+      const d = new Date(b.startTime);
+      const bookingDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
       totalCourt += courtCharge;
       totalDrinks += drinksRev;
@@ -117,7 +118,7 @@ export default function Settings() {
       totalDiscount += discountAmount;
       totalNet += netRevenue;
 
-      csvContent += `"${bookingDate}","${b.id}","${b.customerName.replace(/"/g, '""')}","${court ? court.name : 'Unknown'}",${courtCharge},${drinksRev},${foodRev},${discountAmount},${netRevenue},"${b.paymentMethod || 'UPI'}"\n`;
+      csvContent += `"${bookingDate}","${b.phone}","${b.customerName.replace(/"/g, '""')}","${court ? court.name : 'Unknown'}",${courtCharge},${drinksRev},${foodRev},${discountAmount},${netRevenue},"${b.paymentMethod || 'UPI'}"\n`;
     });
 
     csvContent += `\n"TOTALS",,,,"${totalCourt}","${totalDrinks}","${totalFood}","${totalDiscount}","${totalNet}",\n`;
