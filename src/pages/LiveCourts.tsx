@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Clock, User, IndianRupee, Activity, Phone, ToggleLeft } from 'lucide-react';
 import { useStore } from '@/store/useStore';
-import { formatCurrency, formatTime, getElapsedDisplay, calculateCourtCharge } from '@/utils';
+import { formatCurrency, formatTime, getElapsedDisplay } from '@/utils';
 import { useNavigate } from 'react-router-dom';
 import type { Court, Booking } from '@/types';
 
@@ -74,7 +74,7 @@ export default function LiveCourts() {
           const liveBooking = getLiveBooking(court.id);
           const tab = tabs.find((t) => t.courtId === court.id && t.status === 'open');
           const tabTotal = tab ? tab.items.reduce((s, item) => s + item.quantity * item.unitPrice, 0) : 0;
-          const courtCharge = liveBooking ? calculateCourtCharge(liveBooking.startTime, court.hourlyRate) : 0;
+          const courtCharge = liveBooking ? liveBooking.totalCharge : 0;
           const runningBill = courtCharge + tabTotal;
 
           const liveStatus = getLiveStatus(court);

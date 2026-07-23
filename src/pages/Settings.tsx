@@ -9,11 +9,12 @@ import { formatCurrency } from '@/utils';
 import type { DiscountType } from '@/types';
 
 export default function Settings() {
-  const { courts, updateCourt, discounts, addDiscountType, updateDiscountType, deleteDiscountType, settings, updateSettings } = useStore();
+  const { courts, updateCourt, discounts, addDiscountType, updateDiscountType, deleteDiscountType, settings, updateSettings, clearAllData } = useStore();
   const [editCourtId, setEditCourtId] = useState<string | null>(null);
   const [courtForm, setCourtForm] = useState({ name: '', hourlyRate: 0 });
   const [discountModal, setDiscountModal] = useState(false);
   const [editDiscount, setEditDiscount] = useState<DiscountType | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [discForm, setDiscForm] = useState<Omit<DiscountType, 'id'>>({
     name: '', type: 'percentage', value: 0, isActive: true,
   });
@@ -217,6 +218,23 @@ export default function Settings() {
         </div>
       </section>
 
+      {/* System Reset Section */}
+      <section className="card border-red-100 bg-red-50/20 space-y-4">
+        <h3 className="font-bold text-red-900 flex items-center gap-2">
+          <Trash2 size={16} className="text-red-600" />
+          System Maintenance
+        </h3>
+        <p className="text-sm text-gray-600">
+          Reset all stored data including active bookings, invoices, point-of-sale tabs, and inventory adjustments back to a clean state.
+        </p>
+        <button
+          onClick={() => setShowResetConfirm(true)}
+          className="btn-danger w-full sm:w-auto px-6 py-2.5 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-semibold transition-colors"
+        >
+          <Trash2 size={16} /> Clear All Local Data
+        </button>
+      </section>
+
       {/* Discount Modal */}
       {discountModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -260,6 +278,38 @@ export default function Settings() {
                 <button onClick={() => setDiscountModal(false)} className="btn-ghost flex-1">Cancel</button>
                 <button onClick={saveDiscount} className="btn-primary flex-1" disabled={!discForm.name}>{editDiscount ? 'Update' : 'Add'}</button>
               </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Reset Confirmation Modal */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowResetConfirm(false)} />
+          <motion.div
+            initial={{ scale: 0.97, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="relative bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm z-10 text-center"
+          >
+            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 text-red-600">
+              <Trash2 size={24} />
+            </div>
+            <h3 className="font-bold text-gray-900 text-lg mb-1">Reset All Data?</h3>
+            <p className="text-sm text-gray-500 mb-6">
+              This action will clear all local storage information, resetting active bookings, court bills, activities, and settings to their default empty states. This cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setShowResetConfirm(false)} className="btn-ghost flex-1">Cancel</button>
+              <button
+                onClick={() => {
+                  clearAllData();
+                  setShowResetConfirm(false);
+                }}
+                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-4 rounded-xl flex-1 text-sm transition-colors"
+              >
+                Yes, Reset Everything
+              </button>
             </div>
           </motion.div>
         </div>

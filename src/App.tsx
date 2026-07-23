@@ -13,6 +13,9 @@ import DailyTasks from '@/pages/DailyTasks';
 import Settings from '@/pages/Settings';
 import StatusChecker from '@/pages/StatusChecker';
 
+import { useEffect } from 'react';
+import { supabase } from '@/lib/supabaseClient';
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoggedIn } = useStore();
   if (!isLoggedIn) return <Navigate to="/login" replace />;
@@ -20,6 +23,23 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const { initializeStore } = useStore();
+
+  useEffect(() => {
+    initializeStore();
+
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+        initializeStore();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [initializeStore]);
+
   return (
     <BrowserRouter>
       <Routes>

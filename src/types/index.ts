@@ -25,6 +25,7 @@ export interface Booking {
   totalCharge: number;
   status: 'active' | 'completed' | 'cancelled';
   paymentStatus: 'paid' | 'unpaid';
+  paymentMethod?: 'online' | 'cash';
   createdAt: string;
 }
 

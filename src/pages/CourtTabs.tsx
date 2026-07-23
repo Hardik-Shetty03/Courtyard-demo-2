@@ -6,7 +6,7 @@ import {
   User, Clock, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
-import { formatCurrency, formatTime, calculateCourtCharge } from '@/utils';
+import { formatCurrency, formatTime } from '@/utils';
 import CheckoutModal from '@/components/checkout/CheckoutModal';
 
 export default function CourtTabs() {
@@ -38,7 +38,7 @@ export default function CourtTabs() {
             if (!booking || !tab) return null;
 
             const tabTotal = tab.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
-            const courtCharge = calculateCourtCharge(booking.startTime, court.hourlyRate);
+            const courtCharge = booking.totalCharge;
             const subtotal = courtCharge + tabTotal;
 
             let discountAmount = 0;

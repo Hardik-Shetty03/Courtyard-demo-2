@@ -25,7 +25,7 @@ export default function CheckoutModal({ courtId, onClose }: CheckoutModalProps) 
 
   if (!court || !booking || !tab) return null;
 
-  const courtCharge = calculateCourtCharge(booking.startTime, court.hourlyRate);
+  const courtCharge = booking.totalCharge;
   const foodAndDrinks = tab.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
   const subtotal = courtCharge + foodAndDrinks + extraCharges;
 

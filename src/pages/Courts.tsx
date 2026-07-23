@@ -183,16 +183,17 @@ interface DetailModalProps {
 }
 
 function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, onCheckout }: DetailModalProps) {
-  const { cancelBooking, extendBooking, moveBooking, markPaid, getTabTotal, getCourtCharge } = useStore();
+  const { cancelBooking, extendBooking, moveBooking, markPaid, getTabTotal } = useStore();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showMovePanel, setShowMovePanel] = useState(false);
+  const [showPaymentMethodConfirm, setShowPaymentMethodConfirm] = useState(false);
 
   const court = courts.find(c => c.id === booking.courtId);
   const startDate = new Date(booking.startTime);
   const endDate   = new Date(booking.endTime);
   const ongoing   = isCurrentlyOngoing(booking);
   const tabTotal  = getTabTotal(booking.courtId);
-  const courtCharge = ongoing ? getCourtCharge(booking.courtId) : booking.totalCharge;
+  const courtCharge = booking.totalCharge;
   const runningTotal = courtCharge + tabTotal;
 
   const otherCourts = courts.filter(c => c.id !== booking.courtId && c.isEnabled && !c.isMaintenanceMode);
@@ -279,6 +280,45 @@ function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, on
     );
   }
 
+  if (showPaymentMethodConfirm) {
+    return (
+      <ModalShell onClose={onClose}>
+        <div className="p-6 text-center space-y-4">
+          <div className="w-14 h-14 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-2">
+            <Check size={28} className="text-emerald-600" />
+          </div>
+          <h3 className="text-lg font-bold text-gray-900">Record Payment</h3>
+          <p className="text-gray-500 text-sm">
+            Select the payment method used by <span className="font-semibold">{booking.customerName}</span>:
+          </p>
+          <div className="bg-gray-50 rounded-xl p-3 border border-gray-100 flex justify-between items-center text-sm mb-4">
+            <span className="text-gray-500 font-medium">Amount Due:</span>
+            <span className="font-bold text-[#0F5132] text-base">{formatCurrency(runningTotal)}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => { markPaid(booking.id, 'online'); onClose(); }}
+              className="flex flex-col items-center justify-center gap-2 p-4 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl font-semibold transition-all cursor-pointer hover:-translate-y-0.5"
+            >
+              <span className="text-xl">📱</span>
+              <span className="text-xs">Online / UPI</span>
+            </button>
+            <button
+              onClick={() => { markPaid(booking.id, 'cash'); onClose(); }}
+              className="flex flex-col items-center justify-center gap-2 p-4 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-800 rounded-xl font-semibold transition-all cursor-pointer hover:-translate-y-0.5"
+            >
+              <span className="text-xl">💵</span>
+              <span className="text-xs">Cash</span>
+            </button>
+          </div>
+          <button onClick={() => setShowPaymentMethodConfirm(false)} className="btn-ghost w-full pt-2">
+            Back
+          </button>
+        </div>
+      </ModalShell>
+    );
+  }
+
   return (
     <ModalShell onClose={onClose}>
       <div className={`p-5 ${ongoing ? 'bg-amber-400 text-amber-950' : 'bg-blue-500 text-white'}`}>
@@ -348,7 +388,7 @@ function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, on
           </button>
           {booking.paymentStatus !== 'paid' && (
             <button
-              onClick={() => { markPaid(booking.id); onClose(); }}
+              onClick={() => setShowPaymentMethodConfirm(true)}
               className="flex items-center justify-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 py-3 rounded-xl text-xs font-semibold transition-colors"
             >
               <Check size={13} /> Mark Paid
@@ -531,6 +571,7 @@ function CreateBookingModal({ open, onClose, courtId, startHour, startMinute, en
         numberOfPlayers: form.numberOfPlayers,
         notes: form.notes,
         duration: durationMin,
+        startTime: startD.toISOString(),
         endTime: endD.toISOString(),
         totalCharge: estimatedCharge,
       });
