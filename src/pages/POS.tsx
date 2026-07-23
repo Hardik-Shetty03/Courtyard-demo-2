@@ -1,17 +1,36 @@
 // src/pages/POS.tsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ShoppingBag, Plus, Check, ChevronRight } from 'lucide-react';
 import { useStore } from '@/store/useStore';
-import { formatCurrency } from '@/utils';
+import { formatCurrency, formatTime } from '@/utils';
+import { useNavigate } from 'react-router-dom';
 
 export default function POS() {
   const { courts, inventory, addItemToTab, tabs, bookings } = useStore();
-  const [selectedCourtId, setSelectedCourtId] = useState<string>('');
+  const [selectedBookingId, setSelectedBookingId] = useState<string>('');
   const [addedItem, setAddedItem] = useState<string | null>(null);
+  const [now, setNow] = useState(new Date());
+  const navigate = useNavigate();
 
-  const occupiedCourts = courts.filter((c) => c.status === 'occupied');
-  const activeCourtId = selectedCourtId || occupiedCourts[0]?.id || '';
+  // Refresh current time every 15s to keep the live check accurate
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 15000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Find only bookings that are active and currently ongoing (start <= now && end > now)
+  const liveBookings = bookings.filter((b) => {
+    if (b.status !== 'active') return false;
+    const start = new Date(b.startTime);
+    const end = new Date(b.endTime);
+    return start <= now && end > now;
+  });
+  
+  // Resolve selected booking
+  const activeBooking = liveBookings.find((b) => b.id === selectedBookingId) || liveBookings[0];
+  const activeBookingId = activeBooking?.id || '';
+  const activeCourt = activeBooking ? courts.find((c) => c.id === activeBooking.courtId) : null;
 
   const CATEGORIES = ['drinks', 'food', 'equipment', 'other'] as const;
   const categoryLabels: Record<string, string> = {
@@ -21,12 +40,15 @@ export default function POS() {
     other: '📦 Other',
   };
 
+  const currentTab = tabs.find((t) => t.bookingId === activeBookingId && t.status === 'open');
+  const tabTotal = currentTab ? currentTab.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0) : 0;
+
   const handleAddItem = (itemId: string) => {
-    if (!activeCourtId) return;
+    if (!activeBookingId) return;
     const item = inventory.find((i) => i.id === itemId);
     if (!item || item.stock <= 0) return;
 
-    addItemToTab(activeCourtId, {
+    addItemToTab(activeBookingId, {
       inventoryItemId: item.id,
       name: item.name,
       quantity: 1,
@@ -37,42 +59,39 @@ export default function POS() {
     setTimeout(() => setAddedItem(null), 1200);
   };
 
-  const getTabForCourt = (courtId: string) => tabs.find((t) => t.courtId === courtId && t.status === 'open');
-  const currentTab = getTabForCourt(activeCourtId);
-  const tabTotal = currentTab ? currentTab.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0) : 0;
-  const activeBooking = bookings.find((b) => b.courtId === activeCourtId && b.status === 'active');
-
   return (
     <div className="space-y-5 max-w-7xl mx-auto">
       <div>
         <h2 className="text-lg font-bold text-gray-900">Point of Sale</h2>
-        <p className="text-sm text-gray-500">Quick-add items to a court tab</p>
+        <p className="text-sm text-gray-500">Quick-add items to an active court tab</p>
       </div>
 
-      {/* Court Selector */}
+      {/* Live Tab Selector */}
       <div className="card">
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Select Court</p>
-        {occupiedCourts.length === 0 ? (
-          <p className="text-sm text-gray-500">No courts are currently occupied.</p>
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Select Live occupied Court</p>
+        {liveBookings.length === 0 ? (
+          <p className="text-sm text-gray-500">No courts are currently occupied by ongoing sessions.</p>
         ) : (
           <div className="flex gap-2 flex-wrap">
-            {occupiedCourts.map((court) => {
-              const booking = bookings.find((b) => b.courtId === court.id && b.status === 'active');
-              const isSelected = activeCourtId === court.id;
+            {liveBookings.map((b) => {
+              const court = courts.find((c) => c.id === b.courtId);
+              const isSelected = activeBookingId === b.id;
               return (
                 <button
-                  key={court.id}
-                  onClick={() => setSelectedCourtId(court.id)}
-                  className={`flex flex-col px-4 py-2.5 rounded-xl border-2 text-left transition-all duration-200 ${
+                  key={b.id}
+                  onClick={() => setSelectedBookingId(b.id)}
+                  className={`flex flex-col px-4 py-2.5 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer ${
                     isSelected
                       ? 'border-[#0F5132] bg-green-50'
                       : 'border-gray-200 bg-white hover:border-green-300'
                   }`}
                 >
                   <span className={`text-sm font-bold ${isSelected ? 'text-[#0F5132]' : 'text-gray-900'}`}>
-                    {court.name}
+                    {court ? court.name : 'Court'}
                   </span>
-                  <span className="text-xs text-gray-400">{booking?.customerName ?? '—'}</span>
+                  <span className="text-xs text-gray-400">
+                    {b.customerName}
+                  </span>
                 </button>
               );
             })}
@@ -93,14 +112,15 @@ export default function POS() {
                   {items.map((item) => {
                     const outOfStock = item.stock <= 0;
                     const justAdded = addedItem === item.id;
+                    const disabled = outOfStock || !activeBookingId;
                     return (
                       <motion.button
                         key={item.id}
                         onClick={() => handleAddItem(item.id)}
-                        disabled={outOfStock || !activeCourtId}
+                        disabled={disabled}
                         whileTap={{ scale: 0.95 }}
                         className={`relative p-3 rounded-xl border-2 text-left transition-all duration-200 ${
-                          outOfStock || !activeCourtId
+                          disabled
                             ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
                             : justAdded
                             ? 'border-emerald-400 bg-emerald-50'
@@ -137,11 +157,11 @@ export default function POS() {
               <div className="flex items-center gap-2">
                 <ShoppingBag size={16} className="text-[#0F5132]" />
                 <p className="font-semibold text-gray-900">
-                  {activeCourtId ? courts.find((c) => c.id === activeCourtId)?.name : 'No Court Selected'}
+                  {activeCourt ? activeCourt.name : 'No Session Selected'}
                 </p>
               </div>
               {activeBooking && (
-                <span className="text-xs text-gray-400">{activeBooking.customerName}</span>
+                <span className="text-xs text-gray-400 font-medium">Customer: {activeBooking.customerName}</span>
               )}
             </div>
 
@@ -166,13 +186,13 @@ export default function POS() {
               </div>
             )}
 
-            {activeCourtId && (
-              <a
-                href="/court-tabs"
-                className="btn-primary w-full flex items-center justify-center gap-2 mt-2"
+            {activeBookingId && (
+              <button
+                onClick={() => navigate('/court-tabs')}
+                className="btn-primary w-full flex items-center justify-center gap-2 mt-2 py-2.5 text-sm font-semibold"
               >
                 View Full Tab <ChevronRight size={16} />
-              </a>
+              </button>
             )}
           </div>
         </div>

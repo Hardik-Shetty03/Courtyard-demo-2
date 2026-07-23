@@ -7,16 +7,16 @@ import { formatCurrency, calculateCourtCharge } from '@/utils';
 import type { CheckoutData } from '@/types';
 
 interface CheckoutModalProps {
-  courtId: string;
+  bookingId: string;
   onClose: () => void;
 }
 
-export default function CheckoutModal({ courtId, onClose }: CheckoutModalProps) {
+export default function CheckoutModal({ bookingId, onClose }: CheckoutModalProps) {
   const { courts, bookings, tabs, discounts, applyDiscount, checkout } = useStore();
 
-  const court = courts.find((c) => c.id === courtId);
-  const booking = bookings.find((b) => b.courtId === courtId && b.status === 'active');
-  const tab = tabs.find((t) => t.courtId === courtId && t.status === 'open');
+  const booking = bookings.find((b) => b.id === bookingId);
+  const court = courts.find((c) => c.id === booking?.courtId);
+  const tab = tabs.find((t) => t.bookingId === bookingId && t.status === 'open');
 
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'upi' | 'card'>('cash');
   const [extraCharges, setExtraCharges] = useState(0);
@@ -40,7 +40,7 @@ export default function CheckoutModal({ courtId, onClose }: CheckoutModalProps) 
 
   const handleCheckout = () => {
     const checkoutData: CheckoutData = {
-      courtId,
+      courtId: court.id,
       bookingId: booking.id,
       courtCharge,
       foodAndDrinks,
@@ -182,7 +182,7 @@ export default function CheckoutModal({ courtId, onClose }: CheckoutModalProps) 
               {tab.discount ? (
                 <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-xl p-3">
                   <span className="text-sm text-red-700">{tab.discount.name} — -{formatCurrency(discountAmount)}</span>
-                  <button onClick={() => applyDiscount(courtId, null)} className="text-xs text-red-600 hover:underline">Remove</button>
+                  <button onClick={() => applyDiscount(court.id, null)} className="text-xs text-red-600 hover:underline">Remove</button>
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
@@ -191,7 +191,7 @@ export default function CheckoutModal({ courtId, onClose }: CheckoutModalProps) 
                       key={d.id}
                       onClick={() => {
                         const amount = d.type === 'percentage' ? (subtotal * d.value) / 100 : d.value;
-                        applyDiscount(courtId, { discountTypeId: d.id, name: d.name, type: d.type, value: d.value, amount });
+                        applyDiscount(court.id, { discountTypeId: d.id, name: d.name, type: d.type, value: d.value, amount });
                       }}
                       className="text-xs bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-green-50 hover:border-green-300 hover:text-green-800 transition-colors"
                     >

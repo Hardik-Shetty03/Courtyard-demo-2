@@ -64,10 +64,10 @@ interface AppState {
   markPaid: (bookingId: string, paymentMethod: 'online' | 'cash', discount?: DiscountApplication | null) => Promise<void>;
 
   // Tabs
-  addItemToTab: (courtId: string, item: Omit<TabItem, 'id'>) => Promise<void>;
-  removeItemFromTab: (courtId: string, itemId: string) => Promise<void>;
-  updateItemQuantity: (courtId: string, itemId: string, quantity: number) => Promise<void>;
-  applyDiscount: (courtId: string, discount: DiscountApplication | null) => Promise<void>;
+  addItemToTab: (bookingId: string, item: Omit<TabItem, 'id'>) => Promise<void>;
+  removeItemFromTab: (bookingId: string, itemId: string) => Promise<void>;
+  updateItemQuantity: (bookingId: string, itemId: string, quantity: number) => Promise<void>;
+  applyDiscount: (bookingId: string, discount: DiscountApplication | null) => Promise<void>;
   checkout: (checkoutData: CheckoutData) => Promise<void>;
 
   // Inventory
@@ -252,6 +252,36 @@ export const useStore = create<AppState>()(
           // Open tabs go to tabs state
           const tabs = allTabs.filter(t => t.status === 'open');
 
+          // Self-healing: Check if any active booking is missing an open tab
+          const activeBookings = bookings.filter(b => b.status === 'active');
+          const finalTabs = [...tabs];
+          
+          for (const b of activeBookings) {
+            const hasTab = finalTabs.some(t => t.bookingId === b.id);
+            if (!hasTab) {
+              console.warn(`Self-healing: Found active booking ${b.id} with no open tab. Creating one...`);
+              const newTab: CourtTab = {
+                courtId: b.courtId,
+                bookingId: b.id,
+                items: [],
+                discount: null,
+                status: 'open',
+                createdAt: new Date().toISOString(),
+              };
+              finalTabs.push(newTab);
+              
+              // Insert into Supabase in background
+              supabase.from('court_tabs').insert({
+                id: safeUUID(),
+                court_id: b.courtId,
+                booking_id: b.id,
+                status: 'open',
+              }).then(({ error }) => {
+                if (error) console.error('Self-healing: Failed to insert open tab to Supabase:', error);
+              });
+            }
+          }
+
           // Construct completed checkouts list from checked out tabs & ANY paid bookings (active or completed)
           const paidBookings = bookings.filter(b => b.paymentStatus === 'paid');
           const completedCheckouts: CheckoutData[] = paidBookings.map(b => {
@@ -278,7 +308,7 @@ export const useStore = create<AppState>()(
             };
           });
 
-          set({ courts, bookings, inventory, tasks, tabs, completedCheckouts });
+          set({ courts, bookings, inventory, tasks, tabs: finalTabs, completedCheckouts });
         } catch (error) {
           console.error('Error initializing store from Supabase:', error);
         }
@@ -401,6 +431,7 @@ export const useStore = create<AppState>()(
         }
 
         const { error: te } = await supabase.from('court_tabs').insert({
+          id: safeUUID(),
           court_id: data.courtId,
           booking_id: id,
           status: 'open',
@@ -650,12 +681,12 @@ export const useStore = create<AppState>()(
         }
       },
 
-      addItemToTab: async (courtId, item) => {
-        const tab = get().tabs.find((t) => t.courtId === courtId && t.status === 'open');
+      addItemToTab: async (bookingId, item) => {
+        const tab = get().tabs.find((t) => t.bookingId === bookingId && t.status === 'open');
         if (!tab) return;
 
-        // Get DB tab ID
-        const { data: dbTabData, error: de } = await supabase.from('court_tabs').select('id').eq('court_id', courtId).eq('status', 'open').single();
+        // Get DB tab ID using bookingId
+        const { data: dbTabData, error: de } = await supabase.from('court_tabs').select('id').eq('booking_id', bookingId).eq('status', 'open').single();
         if (de || !dbTabData) {
           console.error('Supabase addItemToTab tab lookup error:', de);
           alert(`Database Error (addItemToTab - tab lookup): ${de?.message || 'Tab not found'}`);
@@ -666,7 +697,7 @@ export const useStore = create<AppState>()(
 
         set((state) => {
           const tabs = state.tabs.map((t) => {
-            if (t.courtId !== courtId) return t;
+            if (t.bookingId !== bookingId) return t;
             const existing = t.items.find((i) => i.inventoryItemId === item.inventoryItemId);
             if (existing) {
               return {
@@ -686,9 +717,9 @@ export const useStore = create<AppState>()(
           return { tabs, inventory };
         });
 
-        const court = get().courts.find((c) => c.id === courtId);
+        const court = get().courts.find((c) => c.id === tab.courtId);
         get().addActivity({
-          message: `Sold ${item.name} ×${item.quantity} → ${court?.name ?? courtId} tab`,
+          message: `Sold ${item.name} ×${item.quantity} → ${court?.name ?? tab.courtId} tab`,
           type: 'inventory',
         });
 
@@ -727,15 +758,15 @@ export const useStore = create<AppState>()(
         }
       },
 
-      removeItemFromTab: async (courtId, itemId) => {
-        const tab = get().tabs.find((t) => t.courtId === courtId && t.status === 'open');
+      removeItemFromTab: async (bookingId, itemId) => {
+        const tab = get().tabs.find((t) => t.bookingId === bookingId && t.status === 'open');
         if (!tab) return;
         const item = tab.items.find(i => i.id === itemId);
         if (!item) return;
 
         set((state) => ({
           tabs: state.tabs.map((t) => {
-            if (t.courtId !== courtId) return t;
+            if (t.bookingId !== bookingId) return t;
             return { ...t, items: t.items.filter((i) => i.id !== itemId) };
           }),
           inventory: state.inventory.map((inv) =>
@@ -759,8 +790,8 @@ export const useStore = create<AppState>()(
         }
       },
 
-      updateItemQuantity: async (courtId, itemId, quantity) => {
-        const tab = get().tabs.find((t) => t.courtId === courtId && t.status === 'open');
+      updateItemQuantity: async (bookingId, itemId, quantity) => {
+        const tab = get().tabs.find((t) => t.bookingId === bookingId && t.status === 'open');
         if (!tab) return;
         const item = tab.items.find(i => i.id === itemId);
         if (!item) return;
@@ -768,7 +799,7 @@ export const useStore = create<AppState>()(
 
         set((state) => ({
           tabs: state.tabs.map((t) => {
-            if (t.courtId !== courtId) return t;
+            if (t.bookingId !== bookingId) return t;
             return {
               ...t,
               items:
@@ -806,16 +837,16 @@ export const useStore = create<AppState>()(
         }
       },
 
-      applyDiscount: async (courtId, discount) => {
+      applyDiscount: async (bookingId, discount) => {
         set((state) => ({
-          tabs: state.tabs.map((t) => (t.courtId === courtId ? { ...t, discount } : t)),
+          tabs: state.tabs.map((t) => (t.bookingId === bookingId ? { ...t, discount } : t)),
         }));
 
         const { error } = await supabase.from('court_tabs').update({
           discount_name: discount ? discount.name : null,
           discount_value: discount ? discount.value : null,
           discount_type: discount ? discount.type : null,
-        }).eq('court_id', courtId).eq('status', 'open');
+        }).eq('booking_id', bookingId).eq('status', 'open');
         if (error) {
           console.error('Supabase applyDiscount error:', error);
           alert(`Database Error (applyDiscount): ${error.message}`);

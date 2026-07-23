@@ -179,11 +179,11 @@ interface DetailModalProps {
   bookingsList: Booking[];
   onClose: () => void;
   onEdit: (b: Booking) => void;
-  onCheckout: (courtId: string) => void;
+  onCheckout: (bookingId: string) => void;
 }
 
 function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, onCheckout }: DetailModalProps) {
-  const { cancelBooking, extendBooking, moveBooking, markPaid, getTabTotal, discounts } = useStore();
+  const { cancelBooking, extendBooking, moveBooking, markPaid, discounts, tabs } = useStore();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showMovePanel, setShowMovePanel] = useState(false);
   const [showPaymentMethodConfirm, setShowPaymentMethodConfirm] = useState(false);
@@ -193,7 +193,10 @@ function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, on
   const startDate = new Date(booking.startTime);
   const endDate   = new Date(booking.endTime);
   const ongoing   = isCurrentlyOngoing(booking);
-  const tabTotal  = getTabTotal(booking.courtId);
+  
+  const tab = tabs.find((t) => t.bookingId === booking.id && t.status === 'open');
+  const tabTotal = tab ? tab.items.reduce((s, item) => s + item.quantity * item.unitPrice, 0) : 0;
+  
   const courtCharge = booking.totalCharge;
   const runningTotal = courtCharge + tabTotal;
 
@@ -454,7 +457,7 @@ function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, on
         </div>
 
         <button
-          onClick={() => onCheckout(booking.courtId)}
+          onClick={() => onCheckout(booking.id)}
           className="btn-primary w-full py-3.5 flex items-center justify-center gap-2 text-sm"
         >
           <CreditCard size={15} /> Checkout &amp; Pay — {formatCurrency(runningTotal)}
@@ -940,7 +943,7 @@ export default function Courts() {
   const [detailModal, setDetailModal] = useState<{ open: boolean; booking: Booking | null }>({
     open: false, booking: null,
   });
-  const [checkoutCourtId, setCheckoutCourtId] = useState<string | null>(null);
+  const [checkoutBookingId, setCheckoutBookingId] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [now, setNow] = useState(new Date());
@@ -1025,9 +1028,9 @@ export default function Courts() {
     });
   }, []);
 
-  const openCheckout = useCallback((courtId: string) => {
+  const openCheckout = useCallback((bookingId: string) => {
     setDetailModal({ open: false, booking: null });
-    setCheckoutCourtId(courtId);
+    setCheckoutBookingId(bookingId);
   }, []);
 
   // Stats header calculation
@@ -1231,10 +1234,10 @@ export default function Courts() {
         )}
       </AnimatePresence>
 
-      {checkoutCourtId && (
+      {checkoutBookingId && (
         <CheckoutModal
-          courtId={checkoutCourtId}
-          onClose={() => setCheckoutCourtId(null)}
+          bookingId={checkoutBookingId}
+          onClose={() => setCheckoutBookingId(null)}
         />
       )}
     </div>
