@@ -129,6 +129,15 @@ export const useStore = create<AppState>()(
 
       initializeStore: async () => {
         try {
+          // 0. Auto-clean bookings older than 2 days to conserve database space
+          const twoDaysAgo = new Date();
+          twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+          const { error: cleanupError } = await supabase
+            .from('bookings')
+            .delete()
+            .lt('start_time', twoDaysAgo.toISOString());
+          if (cleanupError) console.error('Supabase auto-cleanup error:', cleanupError);
+
           // 1. Fetch courts
           const { data: courtsData, error: ce } = await supabase.from('courts').select('*').order('name');
           if (ce) {
