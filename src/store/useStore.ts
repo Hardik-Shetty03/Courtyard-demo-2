@@ -243,9 +243,9 @@ export const useStore = create<AppState>()(
           // Open tabs go to tabs state
           const tabs = allTabs.filter(t => t.status === 'open');
 
-          // Construct completed checkouts list from checked out tabs & completed bookings
-          const completedBookings = bookings.filter(b => b.status === 'completed' && b.paymentStatus === 'paid');
-          const completedCheckouts: CheckoutData[] = completedBookings.map(b => {
+          // Construct completed checkouts list from checked out tabs & ANY paid bookings (active or completed)
+          const paidBookings = bookings.filter(b => b.paymentStatus === 'paid');
+          const completedCheckouts: CheckoutData[] = paidBookings.map(b => {
             const relatedTab = allTabs.find(t => t.bookingId === b.id && t.status === 'checked_out');
             const foodAndDrinks = relatedTab ? relatedTab.items.reduce((s, item) => s + item.quantity * item.unitPrice, 0) : 0;
             const subtotal = b.totalCharge + foodAndDrinks;
@@ -577,10 +577,26 @@ export const useStore = create<AppState>()(
 
       markPaid: async (bookingId, paymentMethod) => {
         const booking = get().bookings.find((b) => b.id === bookingId);
+        if (!booking) return;
+
+        const updatedBooking = { ...booking, paymentStatus: 'paid' as const, paymentMethod };
+        const newCheckout: CheckoutData = {
+          courtId: booking.courtId,
+          bookingId: booking.id,
+          courtCharge: booking.totalCharge,
+          foodAndDrinks: 0,
+          discount: null,
+          extraCharges: 0,
+          extraChargesNote: '',
+          grandTotal: booking.totalCharge,
+          paymentMethod: paymentMethod === 'online' ? 'upi' : 'cash',
+        };
+
         set((state) => ({
           bookings: state.bookings.map((b) =>
-            b.id === bookingId ? { ...b, paymentStatus: 'paid', paymentMethod } : b
+            b.id === bookingId ? updatedBooking : b
           ),
+          completedCheckouts: [...state.completedCheckouts.filter(c => c.bookingId !== bookingId), newCheckout],
         }));
 
         if (booking) {
@@ -775,7 +791,7 @@ export const useStore = create<AppState>()(
       checkout: async (checkoutData) => {
         const { bookingId, courtId } = checkoutData;
         set((state) => ({
-          completedCheckouts: [...state.completedCheckouts, checkoutData],
+          completedCheckouts: [...state.completedCheckouts.filter(c => c.bookingId !== bookingId), checkoutData],
           bookings: state.bookings.map((b) =>
             b.id === bookingId ? { ...b, paymentStatus: 'paid', status: 'completed' } : b
           ),
