@@ -14,6 +14,21 @@ import {
 import { generateId } from '@/utils';
 import { supabase } from '@/lib/supabaseClient';
 
+function safeUUID() {
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID) {
+    try {
+      return window.crypto.randomUUID();
+    } catch (e) {
+      // fallback to manual RFC4122 v4 generator
+    }
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 interface AppState {
   // Data
   courts: Court[];
@@ -34,6 +49,7 @@ interface AppState {
   // Supabase Lifecycle
   initializeStore: () => Promise<void>;
 
+  // Courts
   updateCourt: (courtId: string, updates: Partial<Court>) => Promise<void>;
   addCourt: (court: Omit<Court, 'id' | 'status' | 'isMaintenanceMode' | 'isEnabled'>) => Promise<void>;
   deleteCourt: (courtId: string) => Promise<void>;
@@ -114,7 +130,12 @@ export const useStore = create<AppState>()(
       initializeStore: async () => {
         try {
           // 1. Fetch courts
-          const { data: courtsData } = await supabase.from('courts').select('*').order('name');
+          const { data: courtsData, error: ce } = await supabase.from('courts').select('*').order('name');
+          if (ce) {
+            console.error('Error fetching courts:', ce);
+            return;
+          }
+
           const courts: Court[] = (courtsData || []).map(c => ({
             id: c.id,
             name: c.name,
@@ -126,7 +147,9 @@ export const useStore = create<AppState>()(
           }));
 
           // 2. Fetch bookings
-          const { data: bookingsData } = await supabase.from('bookings').select('*').order('created_at', { ascending: false });
+          const { data: bookingsData, error: be } = await supabase.from('bookings').select('*').order('created_at', { ascending: false });
+          if (be) console.error('Error fetching bookings:', be);
+
           const bookings: Booking[] = (bookingsData || []).map(b => ({
             id: b.id,
             courtId: b.court_id,
@@ -145,7 +168,9 @@ export const useStore = create<AppState>()(
           }));
 
           // 3. Fetch inventory
-          const { data: inventoryData } = await supabase.from('inventory').select('*').order('name');
+          const { data: inventoryData, error: ie } = await supabase.from('inventory').select('*').order('name');
+          if (ie) console.error('Error fetching inventory:', ie);
+
           const inventory: InventoryItem[] = (inventoryData || []).map(i => ({
             id: i.id,
             name: i.name,
@@ -157,7 +182,24 @@ export const useStore = create<AppState>()(
           }));
 
           // 4. Fetch daily_tasks
-          const { data: tasksData } = await supabase.from('daily_tasks').select('*').order('label');
+          let { data: tasksData, error: te } = await supabase.from('daily_tasks').select('*').order('label');
+          if (te) console.error('Error fetching tasks:', te);
+
+          if (!tasksData || tasksData.length === 0) {
+            const seedTasks = INITIAL_TASKS.map(t => ({
+              id: t.id,
+              label: t.label,
+              type: t.type,
+              completed: t.completed,
+              completed_at: t.completedAt,
+              completed_by: t.completedBy,
+            }));
+            const { error: se } = await supabase.from('daily_tasks').insert(seedTasks);
+            if (se) console.error('Error seeding tasks:', se);
+            const { data: reFetched } = await supabase.from('daily_tasks').select('*').order('label');
+            tasksData = reFetched || [];
+          }
+
           const tasks: Task[] = (tasksData || []).map(t => ({
             id: t.id,
             label: t.label,
@@ -168,7 +210,9 @@ export const useStore = create<AppState>()(
           }));
 
           // 5. Fetch tabs & tab items
-          const { data: tabsData } = await supabase.from('court_tabs').select('*, tab_items(*)');
+          const { data: tabsData, error: tbe } = await supabase.from('court_tabs').select('*, tab_items(*)');
+          if (tbe) console.error('Error fetching tabs:', tbe);
+
           const allTabs: CourtTab[] = (tabsData || []).map(t => {
             const discount = t.discount_name ? {
               discountTypeId: 'custom',
@@ -243,11 +287,15 @@ export const useStore = create<AppState>()(
         if (updates.isEnabled !== undefined) dbUpdates.is_enabled = updates.isEnabled;
         if (updates.isMaintenanceMode !== undefined) dbUpdates.is_maintenance_mode = updates.isMaintenanceMode;
 
-        await supabase.from('courts').update(dbUpdates).eq('id', courtId);
+        const { error } = await supabase.from('courts').update(dbUpdates).eq('id', courtId);
+        if (error) {
+          console.error('Supabase updateCourt error:', error);
+          alert(`Database Error (updateCourt): ${error.message}`);
+        }
       },
 
       addCourt: async (courtData) => {
-        const id = crypto.randomUUID();
+        const id = safeUUID();
         const court: Court = {
           ...courtData,
           id,
@@ -260,7 +308,7 @@ export const useStore = create<AppState>()(
           courts: [...state.courts, court],
         }));
 
-        await supabase.from('courts').insert({
+        const { error } = await supabase.from('courts').insert({
           id,
           name: courtData.name,
           hourly_rate: courtData.hourlyRate,
@@ -269,6 +317,10 @@ export const useStore = create<AppState>()(
           is_maintenance_mode: false,
           color: courtData.color || '#0F5132',
         });
+        if (error) {
+          console.error('Supabase addCourt error:', error);
+          alert(`Database Error (addCourt): ${error.message}`);
+        }
       },
 
       deleteCourt: async (courtId) => {
@@ -276,11 +328,15 @@ export const useStore = create<AppState>()(
           courts: state.courts.filter((c) => c.id !== courtId),
         }));
 
-        await supabase.from('courts').delete().eq('id', courtId);
+        const { error } = await supabase.from('courts').delete().eq('id', courtId);
+        if (error) {
+          console.error('Supabase deleteCourt error:', error);
+          alert(`Database Error (deleteCourt): ${error.message}`);
+        }
       },
 
       createBooking: async (data) => {
-        const id = crypto.randomUUID();
+        const id = safeUUID();
         const court = get().courts.find((c) => c.id === data.courtId);
         const hourlyRate = court?.hourlyRate ?? 500;
         const totalCharge = (data.duration / 60) * hourlyRate;
@@ -316,7 +372,7 @@ export const useStore = create<AppState>()(
           type: 'booking',
         });
 
-        await supabase.from('bookings').insert({
+        const { error: be } = await supabase.from('bookings').insert({
           id,
           court_id: data.courtId,
           customer_name: data.customerName,
@@ -330,14 +386,26 @@ export const useStore = create<AppState>()(
           status: 'active',
           payment_status: 'unpaid',
         });
+        if (be) {
+          console.error('Supabase createBooking insert booking error:', be);
+          alert(`Database Error (createBooking - insert booking): ${be.message}`);
+        }
 
-        await supabase.from('court_tabs').insert({
+        const { error: te } = await supabase.from('court_tabs').insert({
           court_id: data.courtId,
           booking_id: id,
           status: 'open',
         });
+        if (te) {
+          console.error('Supabase createBooking insert tab error:', te);
+          alert(`Database Error (createBooking - insert tab): ${te.message}`);
+        }
 
-        await supabase.from('courts').update({ status: 'occupied' }).eq('id', data.courtId);
+        const { error: ce } = await supabase.from('courts').update({ status: 'occupied' }).eq('id', data.courtId);
+        if (ce) {
+          console.error('Supabase createBooking update court error:', ce);
+          alert(`Database Error (createBooking - update court status): ${ce.message}`);
+        }
       },
 
       updateBooking: async (bookingId, updates) => {
@@ -358,7 +426,11 @@ export const useStore = create<AppState>()(
         if (updates.paymentStatus !== undefined) dbUpdates.payment_status = updates.paymentStatus;
         if (updates.paymentMethod !== undefined) dbUpdates.payment_method = updates.paymentMethod;
 
-        await supabase.from('bookings').update(dbUpdates).eq('id', bookingId);
+        const { error } = await supabase.from('bookings').update(dbUpdates).eq('id', bookingId);
+        if (error) {
+          console.error('Supabase updateBooking error:', error);
+          alert(`Database Error (updateBooking): ${error.message}`);
+        }
       },
 
       endBooking: async (bookingId) => {
@@ -375,9 +447,23 @@ export const useStore = create<AppState>()(
           tabs: state.tabs.filter((t) => t.bookingId !== bookingId),
         }));
 
-        await supabase.from('bookings').update({ status: 'completed' }).eq('id', bookingId);
-        await supabase.from('courts').update({ status: 'available' }).eq('id', booking.courtId);
-        await supabase.from('court_tabs').update({ status: 'checked_out' }).eq('booking_id', bookingId);
+        const { error: be } = await supabase.from('bookings').update({ status: 'completed' }).eq('id', bookingId);
+        if (be) {
+          console.error('Supabase endBooking update booking error:', be);
+          alert(`Database Error (endBooking - update booking): ${be.message}`);
+        }
+
+        const { error: ce } = await supabase.from('courts').update({ status: 'available' }).eq('id', booking.courtId);
+        if (ce) {
+          console.error('Supabase endBooking update court error:', ce);
+          alert(`Database Error (endBooking - update court): ${ce.message}`);
+        }
+
+        const { error: te } = await supabase.from('court_tabs').update({ status: 'checked_out' }).eq('booking_id', bookingId);
+        if (te) {
+          console.error('Supabase endBooking update tab error:', te);
+          alert(`Database Error (endBooking - update tab): ${te.message}`);
+        }
       },
 
       cancelBooking: async (bookingId) => {
@@ -399,11 +485,25 @@ export const useStore = create<AppState>()(
 
         get().addActivity({ message: `Booking cancelled: ${booking.customerName}`, type: 'booking' });
 
-        await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', bookingId);
-        if (!otherActive) {
-          await supabase.from('courts').update({ status: 'available' }).eq('id', booking.courtId);
+        const { error: be } = await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', bookingId);
+        if (be) {
+          console.error('Supabase cancelBooking update booking error:', be);
+          alert(`Database Error (cancelBooking - update booking): ${be.message}`);
         }
-        await supabase.from('court_tabs').delete().eq('booking_id', bookingId);
+
+        if (!otherActive) {
+          const { error: ce } = await supabase.from('courts').update({ status: 'available' }).eq('id', booking.courtId);
+          if (ce) {
+            console.error('Supabase cancelBooking update court error:', ce);
+            alert(`Database Error (cancelBooking - update court): ${ce.message}`);
+          }
+        }
+
+        const { error: te } = await supabase.from('court_tabs').delete().eq('booking_id', bookingId);
+        if (te) {
+          console.error('Supabase cancelBooking delete tab error:', te);
+          alert(`Database Error (cancelBooking - delete tab): ${te.message}`);
+        }
       },
 
       extendBooking: async (bookingId, additionalHours) => {
@@ -423,11 +523,15 @@ export const useStore = create<AppState>()(
 
         get().addActivity({ message: `Booking extended by ${additionalHours}h: ${booking.customerName}`, type: 'booking' });
 
-        await supabase.from('bookings').update({
+        const { error } = await supabase.from('bookings').update({
           end_time: newEnd.toISOString(),
           duration: booking.duration + additionalHours * 60,
           total_charge: newCharge,
         }).eq('id', bookingId);
+        if (error) {
+          console.error('Supabase extendBooking error:', error);
+          alert(`Database Error (extendBooking): ${error.message}`);
+        }
       },
 
       moveBooking: async (bookingId, newCourtId) => {
@@ -452,9 +556,23 @@ export const useStore = create<AppState>()(
 
         get().addActivity({ message: `Booking moved to ${newCourt?.name}: ${booking.customerName}`, type: 'booking' });
 
-        await supabase.from('bookings').update({ court_id: newCourtId }).eq('id', bookingId);
-        await supabase.from('courts').update({ status: 'available' }).eq('id', oldCourtId);
-        await supabase.from('courts').update({ status: 'occupied' }).eq('id', newCourtId);
+        const { error: be } = await supabase.from('bookings').update({ court_id: newCourtId }).eq('id', bookingId);
+        if (be) {
+          console.error('Supabase moveBooking update booking error:', be);
+          alert(`Database Error (moveBooking - update booking): ${be.message}`);
+        }
+
+        const { error: ce1 } = await supabase.from('courts').update({ status: 'available' }).eq('id', oldCourtId);
+        if (ce1) {
+          console.error('Supabase moveBooking update old court error:', ce1);
+          alert(`Database Error (moveBooking - update old court): ${ce1.message}`);
+        }
+
+        const { error: ce2 } = await supabase.from('courts').update({ status: 'occupied' }).eq('id', newCourtId);
+        if (ce2) {
+          console.error('Supabase moveBooking update new court error:', ce2);
+          alert(`Database Error (moveBooking - update new court): ${ce2.message}`);
+        }
       },
 
       markPaid: async (bookingId, paymentMethod) => {
@@ -472,10 +590,14 @@ export const useStore = create<AppState>()(
           });
         }
 
-        await supabase.from('bookings').update({
+        const { error } = await supabase.from('bookings').update({
           payment_status: 'paid',
           payment_method: paymentMethod,
         }).eq('id', bookingId);
+        if (error) {
+          console.error('Supabase markPaid error:', error);
+          alert(`Database Error (markPaid): ${error.message}`);
+        }
       },
 
       addItemToTab: async (courtId, item) => {
@@ -483,10 +605,14 @@ export const useStore = create<AppState>()(
         if (!tab) return;
 
         // Get DB tab ID
-        const { data: dbTabData } = await supabase.from('court_tabs').select('id').eq('court_id', courtId).eq('status', 'open').single();
-        if (!dbTabData) return;
+        const { data: dbTabData, error: de } = await supabase.from('court_tabs').select('id').eq('court_id', courtId).eq('status', 'open').single();
+        if (de || !dbTabData) {
+          console.error('Supabase addItemToTab tab lookup error:', de);
+          alert(`Database Error (addItemToTab - tab lookup): ${de?.message || 'Tab not found'}`);
+          return;
+        }
 
-        const id = crypto.randomUUID();
+        const id = safeUUID();
 
         set((state) => {
           const tabs = state.tabs.map((t) => {
@@ -518,12 +644,16 @@ export const useStore = create<AppState>()(
 
         const existingItem = tab.items.find((i) => i.inventoryItemId === item.inventoryItemId);
         if (existingItem) {
-          await supabase.from('tab_items')
+          const { error } = await supabase.from('tab_items')
             .update({ quantity: existingItem.quantity + item.quantity })
             .eq('tab_id', dbTabData.id)
             .eq('inventory_item_id', item.inventoryItemId);
+          if (error) {
+            console.error('Supabase addItemToTab update quantity error:', error);
+            alert(`Database Error (addItemToTab - update quantity): ${error.message}`);
+          }
         } else {
-          await supabase.from('tab_items').insert({
+          const { error } = await supabase.from('tab_items').insert({
             id,
             tab_id: dbTabData.id,
             inventory_item_id: item.inventoryItemId,
@@ -531,11 +661,19 @@ export const useStore = create<AppState>()(
             quantity: item.quantity,
             unit_price: item.unitPrice,
           });
+          if (error) {
+            console.error('Supabase addItemToTab insert item error:', error);
+            alert(`Database Error (addItemToTab - insert item): ${error.message}`);
+          }
         }
 
         const invItem = get().inventory.find(i => i.id === item.inventoryItemId);
         if (invItem) {
-          await supabase.from('inventory').update({ stock: invItem.stock }).eq('id', item.inventoryItemId);
+          const { error } = await supabase.from('inventory').update({ stock: invItem.stock }).eq('id', item.inventoryItemId);
+          if (error) {
+            console.error('Supabase addItemToTab update stock error:', error);
+            alert(`Database Error (addItemToTab - update stock): ${error.message}`);
+          }
         }
       },
 
@@ -555,10 +693,19 @@ export const useStore = create<AppState>()(
           ),
         }));
 
-        await supabase.from('tab_items').delete().eq('id', itemId);
+        const { error } = await supabase.from('tab_items').delete().eq('id', itemId);
+        if (error) {
+          console.error('Supabase removeItemFromTab delete error:', error);
+          alert(`Database Error (removeItemFromTab - delete item): ${error.message}`);
+        }
+
         const invItem = get().inventory.find(i => i.id === item.inventoryItemId);
         if (invItem) {
-          await supabase.from('inventory').update({ stock: invItem.stock }).eq('id', item.inventoryItemId);
+          const { error: stockErr } = await supabase.from('inventory').update({ stock: invItem.stock }).eq('id', item.inventoryItemId);
+          if (stockErr) {
+            console.error('Supabase removeItemFromTab update stock error:', stockErr);
+            alert(`Database Error (removeItemFromTab - update stock): ${stockErr.message}`);
+          }
         }
       },
 
@@ -586,14 +733,26 @@ export const useStore = create<AppState>()(
         }));
 
         if (quantity <= 0) {
-          await supabase.from('tab_items').delete().eq('id', itemId);
+          const { error } = await supabase.from('tab_items').delete().eq('id', itemId);
+          if (error) {
+            console.error('Supabase updateItemQuantity delete error:', error);
+            alert(`Database Error (updateItemQuantity - delete): ${error.message}`);
+          }
         } else {
-          await supabase.from('tab_items').update({ quantity }).eq('id', itemId);
+          const { error } = await supabase.from('tab_items').update({ quantity }).eq('id', itemId);
+          if (error) {
+            console.error('Supabase updateItemQuantity update error:', error);
+            alert(`Database Error (updateItemQuantity - update): ${error.message}`);
+          }
         }
 
         const invItem = get().inventory.find(i => i.id === item.inventoryItemId);
         if (invItem) {
-          await supabase.from('inventory').update({ stock: invItem.stock }).eq('id', item.inventoryItemId);
+          const { error: stockErr } = await supabase.from('inventory').update({ stock: invItem.stock }).eq('id', item.inventoryItemId);
+          if (stockErr) {
+            console.error('Supabase updateItemQuantity update stock error:', stockErr);
+            alert(`Database Error (updateItemQuantity - update stock): ${stockErr.message}`);
+          }
         }
       },
 
@@ -602,11 +761,15 @@ export const useStore = create<AppState>()(
           tabs: state.tabs.map((t) => (t.courtId === courtId ? { ...t, discount } : t)),
         }));
 
-        await supabase.from('court_tabs').update({
+        const { error } = await supabase.from('court_tabs').update({
           discount_name: discount ? discount.name : null,
           discount_value: discount ? discount.value : null,
           discount_type: discount ? discount.type : null,
         }).eq('court_id', courtId).eq('status', 'open');
+        if (error) {
+          console.error('Supabase applyDiscount error:', error);
+          alert(`Database Error (applyDiscount): ${error.message}`);
+        }
       },
 
       checkout: async (checkoutData) => {
@@ -628,28 +791,40 @@ export const useStore = create<AppState>()(
           type: 'checkout',
         });
 
-        await supabase.from('bookings').update({
+        const { error: be } = await supabase.from('bookings').update({
           payment_status: 'paid',
           status: 'completed',
           payment_method: checkoutData.paymentMethod,
         }).eq('id', bookingId);
+        if (be) {
+          console.error('Supabase checkout update booking error:', be);
+          alert(`Database Error (checkout - update booking): ${be.message}`);
+        }
 
-        await supabase.from('court_tabs').update({
+        const { error: te } = await supabase.from('court_tabs').update({
           status: 'checked_out',
         }).eq('booking_id', bookingId);
+        if (te) {
+          console.error('Supabase checkout update tab error:', te);
+          alert(`Database Error (checkout - update tab): ${te.message}`);
+        }
 
-        await supabase.from('courts').update({
+        const { error: ce } = await supabase.from('courts').update({
           status: 'available',
         }).eq('id', courtId);
+        if (ce) {
+          console.error('Supabase checkout update court error:', ce);
+          alert(`Database Error (checkout - update court): ${ce.message}`);
+        }
       },
 
       addInventoryItem: async (item) => {
-        const id = crypto.randomUUID();
+        const id = safeUUID();
         set((state) => ({
           inventory: [...state.inventory, { ...item, id }],
         }));
 
-        await supabase.from('inventory').insert({
+        const { error } = await supabase.from('inventory').insert({
           id,
           name: item.name,
           category: item.category,
@@ -658,6 +833,10 @@ export const useStore = create<AppState>()(
           stock: item.stock,
           min_stock: item.minStock,
         });
+        if (error) {
+          console.error('Supabase addInventoryItem error:', error);
+          alert(`Database Error (addInventoryItem): ${error.message}`);
+        }
       },
 
       updateInventoryItem: async (itemId, updates) => {
@@ -673,7 +852,11 @@ export const useStore = create<AppState>()(
         if (updates.stock !== undefined) dbUpdates.stock = updates.stock;
         if (updates.minStock !== undefined) dbUpdates.min_stock = updates.minStock;
 
-        await supabase.from('inventory').update(dbUpdates).eq('id', itemId);
+        const { error } = await supabase.from('inventory').update(dbUpdates).eq('id', itemId);
+        if (error) {
+          console.error('Supabase updateInventoryItem error:', error);
+          alert(`Database Error (updateInventoryItem): ${error.message}`);
+        }
       },
 
       deleteInventoryItem: async (itemId) => {
@@ -681,7 +864,11 @@ export const useStore = create<AppState>()(
           inventory: state.inventory.filter((i) => i.id !== itemId),
         }));
 
-        await supabase.from('inventory').delete().eq('id', itemId);
+        const { error } = await supabase.from('inventory').delete().eq('id', itemId);
+        if (error) {
+          console.error('Supabase deleteInventoryItem error:', error);
+          alert(`Database Error (deleteInventoryItem): ${error.message}`);
+        }
       },
 
       restockItem: async (itemId, amount) => {
@@ -691,7 +878,11 @@ export const useStore = create<AppState>()(
 
         const item = get().inventory.find(i => i.id === itemId);
         if (item) {
-          await supabase.from('inventory').update({ stock: item.stock }).eq('id', itemId);
+          const { error } = await supabase.from('inventory').update({ stock: item.stock }).eq('id', itemId);
+          if (error) {
+            console.error('Supabase restockItem error:', error);
+            alert(`Database Error (restockItem): ${error.message}`);
+          }
         }
       },
 
@@ -727,11 +918,15 @@ export const useStore = create<AppState>()(
 
         const task = get().tasks.find(t => t.id === taskId);
         if (task) {
-          await supabase.from('daily_tasks').update({
+          const { error } = await supabase.from('daily_tasks').update({
             completed: task.completed,
             completed_at: task.completedAt,
             completed_by: task.completedBy,
           }).eq('id', taskId);
+          if (error) {
+            console.error('Supabase toggleTask error:', error);
+            alert(`Database Error (toggleTask): ${error.message}`);
+          }
         }
       },
 
@@ -745,11 +940,15 @@ export const useStore = create<AppState>()(
           })),
         }));
 
-        await supabase.from('daily_tasks').update({
+        const { error } = await supabase.from('daily_tasks').update({
           completed: false,
           completed_at: null,
           completed_by: null,
         });
+        if (error) {
+          console.error('Supabase resetTasks error:', error);
+          alert(`Database Error (resetTasks): ${error.message}`);
+        }
       },
 
       updateSettings: (updates) =>
