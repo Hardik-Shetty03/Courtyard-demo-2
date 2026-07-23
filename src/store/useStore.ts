@@ -34,8 +34,9 @@ interface AppState {
   // Supabase Lifecycle
   initializeStore: () => Promise<void>;
 
-  // Courts
   updateCourt: (courtId: string, updates: Partial<Court>) => Promise<void>;
+  addCourt: (court: Omit<Court, 'id' | 'status' | 'isMaintenanceMode' | 'isEnabled'>) => Promise<void>;
+  deleteCourt: (courtId: string) => Promise<void>;
 
   // Bookings
   createBooking: (data: Omit<Booking, 'id' | 'createdAt' | 'status' | 'totalCharge' | 'paymentStatus'>) => Promise<void>;
@@ -243,6 +244,39 @@ export const useStore = create<AppState>()(
         if (updates.isMaintenanceMode !== undefined) dbUpdates.is_maintenance_mode = updates.isMaintenanceMode;
 
         await supabase.from('courts').update(dbUpdates).eq('id', courtId);
+      },
+
+      addCourt: async (courtData) => {
+        const id = crypto.randomUUID();
+        const court: Court = {
+          ...courtData,
+          id,
+          status: 'available',
+          isEnabled: true,
+          isMaintenanceMode: false,
+          color: courtData.color || '#0F5132',
+        };
+        set((state) => ({
+          courts: [...state.courts, court],
+        }));
+
+        await supabase.from('courts').insert({
+          id,
+          name: courtData.name,
+          hourly_rate: courtData.hourlyRate,
+          status: 'available',
+          is_enabled: true,
+          is_maintenance_mode: false,
+          color: courtData.color || '#0F5132',
+        });
+      },
+
+      deleteCourt: async (courtId) => {
+        set((state) => ({
+          courts: state.courts.filter((c) => c.id !== courtId),
+        }));
+
+        await supabase.from('courts').delete().eq('id', courtId);
       },
 
       createBooking: async (data) => {
