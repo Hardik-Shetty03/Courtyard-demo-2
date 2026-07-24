@@ -17,9 +17,9 @@ import CheckoutModal from '@/components/checkout/CheckoutModal';
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────
 const SLOT_H = 80;        // px per 1-hour slot
-const START_H = 6;        // 6 AM
-const END_H   = 23;       // 11 PM (last slot starts at 10 PM)
-const NUM_SLOTS = END_H - START_H;  // 17
+const START_H = 5;        // 5 AM
+const END_H   = 24;       // 12 AM (midnight)
+const NUM_SLOTS = END_H - START_H;  // 19
 
 const SLOT_HOURS = Array.from({ length: NUM_SLOTS }, (_, i) => START_H + i);
 
@@ -35,7 +35,7 @@ function fmtHour(h: number): string {
 
 function fmtHourShort(h: number): string {
   if (h === 12) return '12 PM';
-  if (h === 0) return '12 AM';
+  if (h === 0 || h === 24) return '12 AM';
   if (h < 12) return `${h} AM`;
   return `${h - 12} PM`;
 }
@@ -586,7 +586,17 @@ function CreateBookingModal({ open, onClose, courtId, startHour, startMinute, en
   const estimatedCharge = Math.ceil(((durationMin > 0 ? durationMin : 0) / 60) * (selectedCourt?.hourlyRate ?? 500));
 
   // Overlap and conflict checks
-  const isOutOfOperatingHours = startD.getHours() < 6 || endD.getHours() > 23 || (endD.getHours() === 23 && endD.getMinutes() > 0);
+  const bookingDateKey = selectedDate.toDateString();
+  const startDayKey = startD.toDateString();
+  const endDayKey = endD.toDateString();
+
+  const isStartInvalid = startDayKey !== bookingDateKey || startD.getHours() < START_H;
+  const isEndInvalid = !(
+    (endDayKey === bookingDateKey && endD.getHours() < END_H) ||
+    (endD.getTime() === new Date(new Date(selectedDate).setHours(END_H, 0, 0, 0)).getTime())
+  );
+
+  const isOutOfOperatingHours = isStartInvalid || isEndInvalid;
   const invalidTimeRange = durationMin <= 0;
 
   const conflict = bookingsList.find(b => {
@@ -720,7 +730,7 @@ function CreateBookingModal({ open, onClose, courtId, startHour, startMinute, en
             <div>
               <label className="label flex items-center gap-1"><Clock size={12} className="text-gray-400" /> Start Hour</label>
               <select value={form.startHour} onChange={e => setForm({ ...form, startHour: parseInt(e.target.value) })} className="input">
-                {Array.from({ length: 17 }, (_, i) => 6 + i).map(h => (
+                {Array.from({ length: END_H - START_H }, (_, i) => START_H + i).map(h => (
                   <option key={h} value={h}>{fmtHour(h)}</option>
                 ))}
               </select>
@@ -740,7 +750,7 @@ function CreateBookingModal({ open, onClose, courtId, startHour, startMinute, en
             <div>
               <label className="label flex items-center gap-1"><Clock size={12} className="text-gray-400" /> End Hour</label>
               <select value={form.endHour} onChange={e => setForm({ ...form, endHour: parseInt(e.target.value) })} className="input">
-                {Array.from({ length: 18 }, (_, i) => 6 + i).map(h => (
+                {Array.from({ length: END_H - START_H + 1 }, (_, i) => START_H + i).map(h => (
                   <option key={h} value={h}>{fmtHour(h)}</option>
                 ))}
               </select>
@@ -1007,7 +1017,7 @@ export default function Courts() {
       courtId,
       startHour,
       startMinute: 0,
-      endHour: Math.min(23, startHour + 1),
+      endHour: Math.min(END_H, startHour + 1),
       endMinute: 0,
       editBooking: null
     });

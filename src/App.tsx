@@ -13,8 +13,9 @@ import DailyTasks from '@/pages/DailyTasks';
 import Settings from '@/pages/Settings';
 import StatusChecker from '@/pages/StatusChecker';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { playAlarmSound } from '@/utils/audio';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoggedIn } = useStore();
@@ -23,7 +24,8 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  const { initializeStore } = useStore();
+  const { initializeStore, bookings } = useStore();
+  const playedAlarmsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     initializeStore();
@@ -39,6 +41,31 @@ export default function App() {
       supabase.removeChannel(channel);
     };
   }, [initializeStore]);
+
+  // Alarm sound triggers when an active unpaid booking ends (within a 2-minute window)
+  useEffect(() => {
+    const checkExpiredBookings = () => {
+      const nowTime = new Date().getTime();
+      bookings.forEach((b) => {
+        if (b.status !== 'active') return;
+        const endTime = new Date(b.endTime).getTime();
+        const diff = nowTime - endTime;
+
+        // Ended, ended in the last 2 minutes, unpaid, and alarm hasn't played in this session yet
+        if (diff > 0 && diff < 120000 && b.paymentStatus === 'unpaid') {
+          if (!playedAlarmsRef.current.has(b.id)) {
+            playedAlarmsRef.current.add(b.id);
+            playAlarmSound();
+            console.log(`[ALARM] Booking for ${b.customerName} on court ${b.courtId} has ended!`);
+          }
+        }
+      });
+    };
+
+    checkExpiredBookings();
+    const interval = setInterval(checkExpiredBookings, 8000);
+    return () => clearInterval(interval);
+  }, [bookings]);
 
   return (
     <BrowserRouter>
