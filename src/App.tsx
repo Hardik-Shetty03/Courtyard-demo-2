@@ -13,6 +13,7 @@ import DailyTasks from '@/pages/DailyTasks';
 import Settings from '@/pages/Settings';
 import StatusChecker from '@/pages/StatusChecker';
 import Tournaments from '@/pages/Tournaments';
+import BulkBooking from '@/pages/BulkBooking';
 
 
 import { useEffect, useRef } from 'react';
@@ -84,6 +85,7 @@ export default function App() {
           <Route index element={<Navigate to="/courts" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="courts" element={<Courts />} />
+          <Route path="bulk-booking" element={<BulkBooking />} />
           <Route path="status-checker" element={<StatusChecker />} />
           <Route path="live-courts" element={<LiveCourts />} />
           <Route path="court-tabs" element={<CourtTabs />} />

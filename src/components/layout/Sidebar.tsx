@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Calendar, Activity, CreditCard,
-  Package, CheckSquare, Settings, LogOut, X, Dumbbell, Search, Trophy
+  Package, CheckSquare, Settings, LogOut, X, Dumbbell, Search, Trophy, Layers
 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { cn } from '@/utils';
@@ -11,6 +11,7 @@ import { cn } from '@/utils';
 const NAV_ITEMS = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/courts', icon: Calendar, label: 'Court Booking' },
+  { to: '/bulk-booking', icon: Layers, label: 'Bulk Booking' },
   { to: '/status-checker', icon: Search, label: 'Status Checker' },
   { to: '/live-courts', icon: Activity, label: 'Live Courts' },
   { to: '/court-tabs', icon: CreditCard, label: 'Court Tabs' },

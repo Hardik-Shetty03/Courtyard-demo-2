@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   IndianRupee, Calendar, CheckCircle, Circle,
   Package, AlertTriangle, Zap, Clock, ArrowRight,
-  Search, Filter, Edit2, X, Eye, FileText, Plus, Minus, ShoppingBag
+  Search, Filter, Edit2, X, Eye, FileText, Plus, Minus, ShoppingBag,
+  FileSpreadsheet, Layers, Trophy
 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { formatCurrency, getTimeAgo } from '@/utils';
@@ -20,7 +21,7 @@ export default function Dashboard() {
   const {
     courts, bookings, activityLog, getLowStockItems,
     completedCheckouts, tasks, inventory, tabs, settings,
-    updateBookingPayment, addPostCheckoutItem
+    updateBookingPayment, addPostCheckoutItem, tournaments
   } = useStore();
   const navigate = useNavigate();
   const [now, setNow] = useState(new Date());
@@ -56,46 +57,174 @@ export default function Dashboard() {
   const getRevenueForDate = (date: Date) => {
     const targetDateStr = date.toDateString();
     
-    // Find bookings that are paid and whose startTime matches target date
+    // Find bookings that are paid and whose startTime matches target date (court booked date)
     const targetBookings = bookings.filter((b) => {
-      if (b.paymentStatus !== 'paid') return false;
+      if (b.paymentStatus !== 'paid' || b.status === 'cancelled') return false;
       const bookingDate = new Date(b.startTime);
       return bookingDate.toDateString() === targetDateStr;
     });
 
-    let total = 0;
+    let regularTotal = 0;
+    let regularCount = 0;
+    let bulkTotal = 0;
+    let bulkCount = 0;
     let cashTotal = 0;
     let upiTotal = 0;
     let count = 0;
 
+    const regularBookingsList: { booking: Booking; amount: number; method: string }[] = [];
+    const bulkBookingsList: { booking: Booking; amount: number; method: string }[] = [];
+
     targetBookings.forEach((b) => {
+      const isBulk = b.notes?.includes('[BULK BOOKING]');
       const checkoutData = completedCheckouts.find((c) => c.bookingId === b.id);
-      if (checkoutData) {
-        total += checkoutData.grandTotal;
-        count++;
-        if (checkoutData.paymentMethod === 'cash') {
-          cashTotal += checkoutData.grandTotal;
-        } else {
-          upiTotal += checkoutData.grandTotal;
-        }
+      const amount = checkoutData ? checkoutData.grandTotal : b.totalCharge;
+      const method = checkoutData ? checkoutData.paymentMethod : (b.paymentMethod || 'cash');
+
+      if (isBulk) {
+        bulkTotal += amount;
+        bulkCount++;
+        bulkBookingsList.push({ booking: b, amount, method });
       } else {
-        total += b.totalCharge;
-        count++;
-        if (b.paymentMethod === 'cash') {
-          cashTotal += b.totalCharge;
-        } else {
-          upiTotal += b.totalCharge;
-        }
+        regularTotal += amount;
+        regularCount++;
+        regularBookingsList.push({ booking: b, amount, method });
+      }
+
+      count++;
+      if (method === 'cash') {
+        cashTotal += amount;
+      } else {
+        upiTotal += amount;
       }
     });
 
-    return { total, cashTotal, upiTotal, count };
+    // Tournament Revenue Calculation for Target Date
+    let tournamentTotal = 0;
+    let tournamentCount = 0;
+    const tournamentList: { name: string; amount: number; method: string }[] = [];
+
+    tournaments.forEach((t) => {
+      let tDateAmount = 0;
+      if (t.payments && t.payments.length > 0) {
+        t.payments.forEach((p) => {
+          const payDate = new Date(p.createdAt || t.startDate);
+          if (payDate.toDateString() === targetDateStr) {
+            tDateAmount += p.amount;
+            if (p.paymentMethod === 'cash') cashTotal += p.amount;
+            else upiTotal += p.amount;
+            tournamentList.push({ name: t.name, amount: p.amount, method: p.paymentMethod });
+          }
+        });
+      }
+
+      if (tDateAmount === 0 && new Date(t.startDate).toDateString() === targetDateStr) {
+        const entryRev = (t.participants?.length || 0) * (t.entryFee || 0);
+        const tabRev = (t.tabs || []).reduce((acc, tab) =>
+          acc + tab.items.reduce((s, item) => s + item.quantity * item.unitPrice, 0), 0
+        );
+        const tRev = entryRev + tabRev;
+        if (tRev > 0) {
+          tDateAmount = tRev;
+          upiTotal += tRev;
+          tournamentList.push({ name: t.name, amount: tRev, method: 'online/combined' });
+        }
+      }
+
+      if (tDateAmount > 0) {
+        tournamentTotal += tDateAmount;
+        tournamentCount++;
+      }
+    });
+
+    const grandTotal = regularTotal + bulkTotal + tournamentTotal;
+
+    return {
+      total: grandTotal,
+      regularTotal,
+      regularCount,
+      bulkTotal,
+      bulkCount,
+      tournamentTotal,
+      tournamentCount,
+      cashTotal,
+      upiTotal,
+      count,
+      regularBookingsList,
+      bulkBookingsList,
+      tournamentList,
+    };
+  };
+
+  const exportRevenueReportCSV = (date: Date) => {
+    const stats = getRevenueForDate(date);
+    const dateStr = date.toISOString().slice(0, 10);
+
+    let csv = `THE COURTYARD - DETAILED REVENUE REPORT (${dateStr})\n`;
+    csv += `Report Date,${date.toLocaleDateString('en-IN')}\n`;
+    csv += `Export Generated At,${new Date().toLocaleString('en-IN')}\n\n`;
+
+    csv += `=== REVENUE CATEGORY BREAKDOWN ===\n`;
+    csv += `Category,Sessions / Events Count,Revenue Amount (INR)\n`;
+    csv += `Regular Court Bookings,${stats.regularCount},"${stats.regularTotal}"\n`;
+    csv += `Bulk Bookings (Recurring),${stats.bulkCount},"${stats.bulkTotal}"\n`;
+    csv += `Tournament Revenue,${stats.tournamentCount},"${stats.tournamentTotal}"\n`;
+    csv += `GRAND TOTAL REVENUE,${stats.count + stats.tournamentCount},"${stats.total}"\n\n`;
+
+    csv += `=== PAYMENT METHOD BREAKDOWN ===\n`;
+    csv += `Payment Method,Amount (INR)\n`;
+    csv += `Cash Payments,"${stats.cashTotal}"\n`;
+    csv += `Online / UPI Payments,"${stats.upiTotal}"\n\n`;
+
+    // Itemized Regular Bookings
+    csv += `=== REGULAR COURT BOOKINGS ITEMIZED ===\n`;
+    csv += `Booking ID,Customer Name,Phone,Court,Scheduled Start,Scheduled End,Amount (INR),Payment Method\n`;
+    stats.regularBookingsList.forEach((item) => {
+      const court = courts.find((c) => c.id === item.booking.courtId);
+      csv += `"${item.booking.id}","${item.booking.customerName}","${item.booking.phone}","${court?.name || 'Court'}","${new Date(item.booking.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}","${new Date(item.booking.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}","${item.amount}","${item.method}"\n`;
+    });
+    if (stats.regularBookingsList.length === 0) {
+      csv += `No regular court bookings on this date.\n`;
+    }
+    csv += `\n`;
+
+    // Itemized Bulk Bookings
+    csv += `=== BULK BOOKINGS ITEMIZED ===\n`;
+    csv += `Booking ID,Customer / Club Name,Phone,Court,Scheduled Start,Scheduled End,Custom Amount (INR),Notes,Payment Method\n`;
+    stats.bulkBookingsList.forEach((item) => {
+      const court = courts.find((c) => c.id === item.booking.courtId);
+      csv += `"${item.booking.id}","${item.booking.customerName}","${item.booking.phone}","${court?.name || 'Court'}","${new Date(item.booking.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}","${new Date(item.booking.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}","${item.amount}","${item.booking.notes || ''}","${item.method}"\n`;
+    });
+    if (stats.bulkBookingsList.length === 0) {
+      csv += `No bulk bookings on this date.\n`;
+    }
+    csv += `\n`;
+
+    // Itemized Tournaments
+    csv += `=== TOURNAMENTS REVENUE ITEMIZED ===\n`;
+    csv += `Tournament Name,Revenue Amount (INR),Payment Method\n`;
+    stats.tournamentList.forEach((item) => {
+      csv += `"${item.name}","${item.amount}","${item.method}"\n`;
+    });
+    if (stats.tournamentList.length === 0) {
+      csv += `No tournament revenue recorded on this date.\n`;
+    }
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Revenue_Report_${dateStr}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const occupied = courts.filter((c) => getLiveStatus(c) === 'occupied').length;
   const available = courts.filter((c) => getLiveStatus(c) === 'available').length;
   const todayBookings = bookings.filter(
-    (b) => new Date(b.createdAt).toDateString() === now.toDateString()
+    (b) => b.status !== 'cancelled' && new Date(b.startTime).toDateString() === now.toDateString()
   ).length;
 
   const todayStats = getRevenueForDate(now);
@@ -295,7 +424,7 @@ export default function Dashboard() {
                 </button>
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-3 items-end">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
                 <div className="w-full sm:w-64">
                   <label className="label text-xs font-bold text-gray-500">Select Date</label>
                   <input
@@ -305,6 +434,24 @@ export default function Dashboard() {
                     className="input bg-white border-gray-200"
                   />
                 </div>
+
+                {selectedRevenueDate && (() => {
+                  const dateParts = selectedRevenueDate.split('-');
+                  const targetDate = new Date(
+                    parseInt(dateParts[0]),
+                    parseInt(dateParts[1]) - 1,
+                    parseInt(dateParts[2])
+                  );
+                  return (
+                    <button
+                      onClick={() => exportRevenueReportCSV(targetDate)}
+                      className="btn-primary py-2.5 px-4 text-xs font-bold flex items-center gap-2 cursor-pointer shadow-sm"
+                    >
+                      <FileSpreadsheet size={15} />
+                      Export Revenue Report (CSV)
+                    </button>
+                  );
+                })()}
               </div>
 
               {selectedRevenueDate && (() => {
@@ -316,19 +463,53 @@ export default function Dashboard() {
                 );
                 const stats = getRevenueForDate(targetDate);
                 return (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-                    <div className="bg-white border border-emerald-100 rounded-xl p-4 shadow-sm">
-                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Total Revenue</p>
-                      <p className="text-xl font-black text-[#0F5132] mt-1">{formatCurrency(stats.total)}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{stats.count} checkout(s)</p>
+                  <div className="space-y-3 pt-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      {/* Grand Total */}
+                      <div className="bg-white border-2 border-emerald-200 rounded-xl p-4 shadow-sm">
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Grand Total Revenue</p>
+                        <p className="text-2xl font-black text-[#0F5132] mt-1">{formatCurrency(stats.total)}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{stats.count + stats.tournamentCount} total item(s)</p>
+                      </div>
+
+                      {/* Regular Bookings */}
+                      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wide flex items-center gap-1">
+                          <Calendar size={11} className="text-blue-500" /> Regular Bookings
+                        </p>
+                        <p className="text-xl font-black text-blue-600 mt-1">{formatCurrency(stats.regularTotal)}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{stats.regularCount} session(s)</p>
+                      </div>
+
+                      {/* Bulk Bookings */}
+                      <div className="bg-white border border-amber-200 rounded-xl p-4 shadow-sm bg-amber-50/20">
+                        <p className="text-[10px] text-amber-800 font-bold uppercase tracking-wide flex items-center gap-1">
+                          <Layers size={11} className="text-amber-600" /> Bulk Bookings
+                        </p>
+                        <p className="text-xl font-black text-amber-600 mt-1">{formatCurrency(stats.bulkTotal)}</p>
+                        <p className="text-xs text-amber-700 mt-0.5">{stats.bulkCount} session(s)</p>
+                      </div>
+
+                      {/* Tournament Revenue */}
+                      <div className="bg-white border border-purple-200 rounded-xl p-4 shadow-sm bg-purple-50/20">
+                        <p className="text-[10px] text-purple-800 font-bold uppercase tracking-wide flex items-center gap-1">
+                          <Trophy size={11} className="text-purple-600" /> Tournament Revenue
+                        </p>
+                        <p className="text-xl font-black text-purple-600 mt-1">{formatCurrency(stats.tournamentTotal)}</p>
+                        <p className="text-xs text-purple-700 mt-0.5">{stats.tournamentCount} event(s)</p>
+                      </div>
                     </div>
-                    <div className="bg-white border border-emerald-100 rounded-xl p-4 shadow-sm">
-                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Cash Payments</p>
-                      <p className="text-xl font-black text-blue-600 mt-1">{formatCurrency(stats.cashTotal)}</p>
-                    </div>
-                    <div className="bg-white border border-emerald-100 rounded-xl p-4 shadow-sm">
-                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">UPI / Online</p>
-                      <p className="text-xl font-black text-emerald-600 mt-1">{formatCurrency(stats.upiTotal)}</p>
+
+                    {/* Cash & UPI sub-cards */}
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex justify-between items-center">
+                        <span className="text-xs font-bold text-gray-600">Cash Payments:</span>
+                        <span className="text-sm font-black text-gray-900">{formatCurrency(stats.cashTotal)}</span>
+                      </div>
+                      <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-3 flex justify-between items-center">
+                        <span className="text-xs font-bold text-emerald-800">Online / UPI Payments:</span>
+                        <span className="text-sm font-black text-emerald-700">{formatCurrency(stats.upiTotal)}</span>
+                      </div>
                     </div>
                   </div>
                 );

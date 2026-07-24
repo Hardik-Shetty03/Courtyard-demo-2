@@ -58,6 +58,7 @@ interface AppState {
 
   // Bookings
   createBooking: (data: Omit<Booking, 'id' | 'createdAt' | 'status' | 'totalCharge' | 'paymentStatus'>) => Promise<void>;
+  createBulkBookings: (bookingsList: Array<Omit<Booking, 'id' | 'createdAt' | 'status' | 'paymentStatus'>>) => Promise<{ count: number; error?: string }>;
   updateBooking: (bookingId: string, updates: Partial<Booking>) => Promise<void>;
   endBooking: (bookingId: string) => Promise<void>;
   cancelBooking: (bookingId: string) => Promise<void>;
@@ -501,6 +502,94 @@ export const useStore = create<AppState>()(
           console.error('Supabase createBooking update court error:', ce);
           alert(`Database Error (createBooking - update court status): ${ce.message}`);
         }
+      },
+
+      createBulkBookings: async (bookingsList) => {
+        if (bookingsList.length === 0) return { count: 0 };
+
+        const newBookings: Booking[] = [];
+        const newTabs: CourtTab[] = [];
+        const dbBookings: any[] = [];
+        const dbTabs: any[] = [];
+
+        for (const data of bookingsList) {
+          const id = `b-${safeUUID()}`;
+          const tabId = `tab-${safeUUID()}`;
+
+          const booking: Booking = {
+            id,
+            courtId: data.courtId,
+            customerName: data.customerName,
+            phone: data.phone,
+            startTime: data.startTime,
+            endTime: data.endTime,
+            duration: data.duration,
+            numberOfPlayers: data.numberOfPlayers || 2,
+            notes: data.notes || '',
+            totalCharge: data.totalCharge,
+            status: 'active',
+            paymentStatus: 'unpaid',
+            createdAt: new Date().toISOString(),
+          };
+
+          const tab: CourtTab = {
+            courtId: data.courtId,
+            bookingId: id,
+            items: [],
+            discount: null,
+            status: 'open',
+            createdAt: new Date().toISOString(),
+          };
+
+          newBookings.push(booking);
+          newTabs.push(tab);
+
+          dbBookings.push({
+            id,
+            court_id: data.courtId,
+            customer_name: data.customerName,
+            phone: data.phone,
+            number_of_players: data.numberOfPlayers || 2,
+            start_time: data.startTime,
+            end_time: data.endTime,
+            duration: data.duration,
+            notes: data.notes || '',
+            total_charge: data.totalCharge,
+            status: 'active',
+            payment_status: 'unpaid',
+          });
+
+          dbTabs.push({
+            id: tabId,
+            court_id: data.courtId,
+            booking_id: id,
+            status: 'open',
+          });
+        }
+
+        // Update local state
+        set((state) => ({
+          bookings: [...state.bookings, ...newBookings],
+          tabs: [...state.tabs, ...newTabs],
+        }));
+
+        get().addActivity({
+          message: `Bulk Booking: Created ${bookingsList.length} sessions for ${bookingsList[0]?.customerName}`,
+          type: 'booking',
+        });
+
+        // Persist to Supabase in batches
+        const { error: be } = await supabase.from('bookings').insert(dbBookings);
+        if (be) {
+          console.error('Supabase createBulkBookings bookings insert error:', be);
+        }
+
+        const { error: te } = await supabase.from('court_tabs').insert(dbTabs);
+        if (te) {
+          console.error('Supabase createBulkBookings tabs insert error:', te);
+        }
+
+        return { count: newBookings.length };
       },
 
       updateBooking: async (bookingId, updates) => {
