@@ -1,6 +1,6 @@
 // src/pages/Dashboard.tsx
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   IndianRupee, Calendar, CheckCircle, Circle,
   Package, AlertTriangle, Zap, Clock, ArrowRight
@@ -22,6 +22,12 @@ export default function Dashboard() {
   } = useStore();
   const navigate = useNavigate();
   const [now, setNow] = useState(new Date());
+  
+  // Date Selector States for Revenue Check
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [selectedRevenueDate, setSelectedRevenueDate] = useState<string>(
+    new Date().toISOString().slice(0, 10)
+  );
 
   // Auto-refresh stats every 15 seconds to sync live court status dynamically
   useEffect(() => {
@@ -38,12 +44,53 @@ export default function Dashboard() {
     return isOccupied ? 'occupied' : 'available';
   };
 
+  const getRevenueForDate = (date: Date) => {
+    const targetDateStr = date.toDateString();
+    
+    // Find bookings that are paid and whose startTime matches target date
+    const targetBookings = bookings.filter((b) => {
+      if (b.paymentStatus !== 'paid') return false;
+      const bookingDate = new Date(b.startTime);
+      return bookingDate.toDateString() === targetDateStr;
+    });
+
+    let total = 0;
+    let cashTotal = 0;
+    let upiTotal = 0;
+    let count = 0;
+
+    targetBookings.forEach((b) => {
+      const checkoutData = completedCheckouts.find((c) => c.bookingId === b.id);
+      if (checkoutData) {
+        total += checkoutData.grandTotal;
+        count++;
+        if (checkoutData.paymentMethod === 'cash') {
+          cashTotal += checkoutData.grandTotal;
+        } else {
+          upiTotal += checkoutData.grandTotal;
+        }
+      } else {
+        total += b.totalCharge;
+        count++;
+        if (b.paymentMethod === 'cash') {
+          cashTotal += b.totalCharge;
+        } else {
+          upiTotal += b.totalCharge;
+        }
+      }
+    });
+
+    return { total, cashTotal, upiTotal, count };
+  };
+
   const occupied = courts.filter((c) => getLiveStatus(c) === 'occupied').length;
   const available = courts.filter((c) => getLiveStatus(c) === 'available').length;
   const todayBookings = bookings.filter(
     (b) => new Date(b.createdAt).toDateString() === now.toDateString()
   ).length;
-  const todayRevenue = completedCheckouts.reduce((s, c) => s + c.grandTotal, 0);
+
+  const todayStats = getRevenueForDate(now);
+  const todayRevenue = todayStats.total;
   const lowStock = getLowStockItems();
   const pendingPayments = bookings.filter((b) => b.status === 'active' && b.paymentStatus === 'unpaid').length;
   const openTasks = tasks.filter((t) => !t.completed).length;
@@ -55,7 +102,8 @@ export default function Dashboard() {
       icon: IndianRupee,
       color: 'bg-emerald-50 text-emerald-600',
       iconBg: 'bg-emerald-100',
-      sub: `${completedCheckouts.length} checkouts`,
+      sub: `${todayStats.count} checkouts`,
+      clickable: true,
     },
     {
       label: "Today's Bookings",
@@ -119,27 +167,110 @@ export default function Dashboard() {
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         {stats.map((stat, i) => (
-          <motion.div
+          <motion.button
             key={stat.label}
             custom={i}
             variants={fadeUp}
             initial="hidden"
             animate="show"
-            className="card flex flex-col justify-between"
+            disabled={!stat.clickable}
+            onClick={() => {
+              if (stat.clickable) {
+                setShowDatePicker(!showDatePicker);
+              }
+            }}
+            className={`card flex flex-col justify-between text-left transition-all ${
+              stat.clickable
+                ? 'cursor-pointer hover:shadow-md hover:border-emerald-300 border-2 border-transparent active:scale-98'
+                : 'border-2 border-transparent'
+            }`}
           >
-            <div className="flex items-start justify-between">
+            <div className="flex items-start justify-between w-full">
               <div className={`p-2.5 rounded-xl ${stat.color} ${stat.iconBg}`}>
                 <stat.icon size={20} />
               </div>
               <span className="text-2xl font-black text-gray-900 leading-none">{stat.value}</span>
             </div>
             <div className="mt-3">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{stat.label}</p>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                {stat.label}
+                {stat.clickable && (
+                  <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded-md">
+                    QUERY
+                  </span>
+                )}
+              </p>
               <p className="text-xs text-gray-500 font-medium mt-0.5">{stat.sub}</p>
             </div>
-          </motion.div>
+          </motion.button>
         ))}
       </div>
+
+      {/* Date Revenue Selector Section */}
+      <AnimatePresence>
+        {showDatePicker && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="card bg-green-50/20 border-2 border-emerald-100 p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
+                  <Calendar className="text-[#0F5132]" size={18} />
+                  Check Revenue for Specified Date
+                </h3>
+                <button
+                  onClick={() => setShowDatePicker(false)}
+                  className="text-gray-400 hover:text-gray-600 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3 items-end">
+                <div className="w-full sm:w-64">
+                  <label className="label text-xs font-bold text-gray-500">Select Date</label>
+                  <input
+                    type="date"
+                    value={selectedRevenueDate}
+                    onChange={(e) => setSelectedRevenueDate(e.target.value)}
+                    className="input bg-white border-gray-200"
+                  />
+                </div>
+              </div>
+
+              {selectedRevenueDate && (() => {
+                const dateParts = selectedRevenueDate.split('-');
+                const targetDate = new Date(
+                  parseInt(dateParts[0]),
+                  parseInt(dateParts[1]) - 1,
+                  parseInt(dateParts[2])
+                );
+                const stats = getRevenueForDate(targetDate);
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                    <div className="bg-white border border-emerald-100 rounded-xl p-4 shadow-sm">
+                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Total Revenue</p>
+                      <p className="text-xl font-black text-[#0F5132] mt-1">{formatCurrency(stats.total)}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{stats.count} checkout(s)</p>
+                    </div>
+                    <div className="bg-white border border-emerald-100 rounded-xl p-4 shadow-sm">
+                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Cash Payments</p>
+                      <p className="text-xl font-black text-blue-600 mt-1">{formatCurrency(stats.cashTotal)}</p>
+                    </div>
+                    <div className="bg-white border border-emerald-100 rounded-xl p-4 shadow-sm">
+                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">UPI / Online</p>
+                      <p className="text-xl font-black text-emerald-600 mt-1">{formatCurrency(stats.upiTotal)}</p>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Quick Actions */}
       <div>
