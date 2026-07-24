@@ -18,7 +18,7 @@ const fadeUp = {
 export default function Dashboard() {
   const {
     courts, bookings, activityLog, getLowStockItems,
-    completedCheckouts, tasks
+    completedCheckouts, tasks, inventory
   } = useStore();
   const navigate = useNavigate();
   const [now, setNow] = useState(new Date());
@@ -95,6 +95,9 @@ export default function Dashboard() {
   const pendingPayments = bookings.filter((b) => b.status === 'active' && b.paymentStatus === 'unpaid').length;
   const openTasks = tasks.filter((t) => !t.completed).length;
 
+  const totalLostUnits = inventory.reduce((s, i) => s + (i.losses || 0), 0);
+  const totalFinancialLoss = inventory.reduce((s, i) => s + (i.losses || 0) * i.purchasePrice, 0);
+
   const stats = [
     {
       label: "Today's Revenue",
@@ -144,6 +147,14 @@ export default function Dashboard() {
       color: 'bg-orange-50 text-orange-600',
       iconBg: 'bg-orange-100',
       sub: 'need restocking',
+    },
+    {
+      label: 'Total Loss (Missing)',
+      value: formatCurrency(totalFinancialLoss),
+      icon: AlertTriangle,
+      color: 'bg-red-50 text-red-600 border border-red-100',
+      iconBg: 'bg-red-100',
+      sub: `${totalLostUnits} units lost`,
     },
   ];
 

@@ -75,6 +75,7 @@ interface AppState {
   updateInventoryItem: (itemId: string, updates: Partial<InventoryItem>) => Promise<void>;
   deleteInventoryItem: (itemId: string) => Promise<void>;
   restockItem: (itemId: string, amount: number) => Promise<void>;
+  recordInventoryLoss: (itemId: string, amount: number, notes?: string) => Promise<void>;
 
   // Discounts
   addDiscountType: (discount: Omit<DiscountType, 'id'>) => void;
@@ -188,6 +189,7 @@ export const useStore = create<AppState>()(
             purchasePrice: Number(i.purchase_price),
             stock: i.stock,
             minStock: i.min_stock,
+            losses: i.losses || 0,
           }));
 
           // 4. Fetch daily_tasks
@@ -963,6 +965,49 @@ export const useStore = create<AppState>()(
           if (error) {
             console.error('Supabase restockItem error:', error);
             alert(`Database Error (restockItem): ${error.message}`);
+          }
+        }
+      },
+
+      recordInventoryLoss: async (itemId, amount, notes = '') => {
+        const currentItem = get().inventory.find(i => i.id === itemId);
+        if (!currentItem) return;
+
+        const newStock = Math.max(0, currentItem.stock - amount);
+        const newLosses = (currentItem.losses || 0) + amount;
+
+        set((state) => ({
+          inventory: state.inventory.map((i) => (i.id === itemId ? { ...i, stock: newStock, losses: newLosses } : i)),
+          activityLog: [
+            {
+              id: `act-${generateId()}`,
+              message: `Loss reported: ${amount} units of ${currentItem.name} (${notes || 'damaged/missing'})`,
+              timestamp: new Date().toISOString(),
+              type: 'inventory',
+            },
+            ...state.activityLog,
+          ],
+        }));
+
+        // Update database (gracefully ignoring if column losses doesn't exist yet)
+        const { error } = await supabase.from('inventory').update({
+          stock: newStock,
+          losses: newLosses
+        }).eq('id', itemId);
+
+        if (error) {
+          // If column is missing, fall back to updating stock only in the DB to prevent crashes
+          if (error.message.includes('column') || error.code === '42703') {
+            console.warn('losses column not found in database. Falling back to updating stock only.');
+            const { error: fallbackErr } = await supabase.from('inventory').update({
+              stock: newStock
+            }).eq('id', itemId);
+            if (fallbackErr) {
+              console.error('Fallback update stock error:', fallbackErr);
+            }
+          } else {
+            console.error('Supabase recordInventoryLoss error:', error);
+            alert(`Database Error (recordInventoryLoss): ${error.message}`);
           }
         }
       },

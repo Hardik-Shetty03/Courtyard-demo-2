@@ -62,6 +62,7 @@ export interface InventoryItem {
   purchasePrice: number;
   stock: number;
   minStock: number;
+  losses?: number;
 }
 
 export interface DiscountType {

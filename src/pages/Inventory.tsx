@@ -14,13 +14,23 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 export default function Inventory() {
-  const { inventory, addInventoryItem, updateInventoryItem, deleteInventoryItem, restockItem } = useStore();
+  const {
+    inventory, addInventoryItem, updateInventoryItem,
+    deleteInventoryItem, restockItem, recordInventoryLoss
+  } = useStore();
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  
+  // Modals state
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [restockModal, setRestockModal] = useState<InventoryItem | null>(null);
   const [restockAmount, setRestockAmount] = useState(10);
+  
+  // Loss Modal state
+  const [lossModal, setLossModal] = useState<InventoryItem | null>(null);
+  const [lossAmount, setLossAmount] = useState(1);
+  const [lossNotes, setLossNotes] = useState('spoilage/leakage');
 
   const filtered = inventory.filter((item) => {
     const matchSearch = item.name.toLowerCase().includes(search.toLowerCase());
@@ -29,6 +39,10 @@ export default function Inventory() {
   });
 
   const lowStock = inventory.filter((i) => i.stock <= i.minStock);
+  
+  // Calculate total financial losses of all items
+  const totalLostUnits = inventory.reduce((s, i) => s + (i.losses || 0), 0);
+  const totalFinancialLoss = inventory.reduce((s, i) => s + (i.losses || 0) * i.purchasePrice, 0);
 
   return (
     <div className="space-y-5 max-w-7xl mx-auto">
@@ -42,15 +56,38 @@ export default function Inventory() {
         </button>
       </div>
 
-      {lowStock.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-          <AlertTriangle size={18} className="text-amber-600 flex-shrink-0 mt-0.5" />
+      {/* Overview Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Low Stock Alert */}
+        {lowStock.length > 0 ? (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+            <AlertTriangle size={18} className="text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-amber-800 text-sm">Low Stock Alert</p>
+              <p className="text-amber-700 text-xs mt-0.5">{lowStock.map(i => `${i.name} (${i.stock})`).join(' · ')}</p>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex items-start gap-3">
+            <Package size={18} className="text-[#0F5132] flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-emerald-800 text-sm">All Stock Healthy</p>
+              <p className="text-emerald-700 text-xs mt-0.5">No items are currently below minimum stock levels.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Losses Summary Card */}
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+          <AlertTriangle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="font-semibold text-amber-800 text-sm">Low Stock Alert</p>
-            <p className="text-amber-700 text-xs mt-0.5">{lowStock.map(i => `${i.name} (${i.stock})`).join(' · ')}</p>
+            <p className="font-semibold text-red-800 text-sm">Losses (Damaged / Missing)</p>
+            <p className="text-red-700 text-xs mt-0.5">
+              Total {totalLostUnits} units lost · <span className="font-bold">{formatCurrency(totalFinancialLoss)}</span> financial loss
+            </p>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
@@ -83,7 +120,7 @@ export default function Inventory() {
       {/* Table */}
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[600px]">
+          <table className="w-full min-w-[700px]">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Item</th>
@@ -92,6 +129,7 @@ export default function Inventory() {
                 <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Buy Price</th>
                 <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Stock</th>
                 <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Min</th>
+                <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Losses</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
@@ -125,25 +163,45 @@ export default function Inventory() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right text-sm text-gray-400">{item.minStock}</td>
+                    <td className="px-4 py-3 text-right">
+                      {item.losses && item.losses > 0 ? (
+                        <span className="text-sm font-semibold text-red-600 bg-red-50 border border-red-100 px-2 py-0.5 rounded-lg">
+                          {item.losses} lost
+                        </span>
+                      ) : (
+                        <span className="text-sm text-gray-300">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1.5">
                         <button
                           onClick={() => setRestockModal(item)}
-                          className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                          className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                           title="Restock"
                         >
                           <RefreshCw size={14} />
                         </button>
                         <button
+                          onClick={() => {
+                            setLossModal(item);
+                            setLossAmount(1);
+                            setLossNotes('spoilage/leakage');
+                          }}
+                          className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                          title="Record Loss / Missing"
+                        >
+                          <AlertTriangle size={14} />
+                        </button>
+                        <button
                           onClick={() => { setEditItem(item); setModalOpen(true); }}
-                          className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+                          className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
                           title="Edit"
                         >
                           <Edit2 size={14} />
                         </button>
                         <button
                           onClick={() => deleteInventoryItem(item.id)}
-                          className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors"
+                          className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                           title="Delete"
                         >
                           <Trash2 size={14} />
@@ -154,7 +212,7 @@ export default function Inventory() {
                 );
               })}
               {filtered.length === 0 && (
-                <tr><td colSpan={7} className="text-center py-10 text-gray-400">No items found</td></tr>
+                <tr><td colSpan={8} className="text-center py-10 text-gray-400">No items found</td></tr>
               )}
             </tbody>
           </table>
@@ -190,8 +248,68 @@ export default function Inventory() {
               <label className="label">Add Quantity</label>
               <input type="number" value={restockAmount} onChange={(e) => setRestockAmount(Math.max(1, parseInt(e.target.value) || 1))} className="input mb-4" min={1} />
               <div className="flex gap-3">
-                <button onClick={() => setRestockModal(null)} className="btn-ghost flex-1">Cancel</button>
-                <button onClick={() => { restockItem(restockModal.id, restockAmount); setRestockModal(null); }} className="btn-primary flex-1">Add Stock</button>
+                <button onClick={() => setRestockModal(null)} className="btn-ghost flex-1 cursor-pointer">Cancel</button>
+                <button onClick={() => { restockItem(restockModal.id, restockAmount); setRestockModal(null); }} className="btn-primary flex-1 cursor-pointer">Add Stock</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Loss Modal */}
+      <AnimatePresence>
+        {lossModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/50" onClick={() => setLossModal(null)} />
+            <motion.div initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.97, opacity: 0 }} className="relative bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm z-10 space-y-4">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-1.5 text-sm sm:text-base">
+                  <AlertTriangle className="text-red-500" size={18} />
+                  Record Loss: {lossModal.name}
+                </h3>
+                <p className="text-xs text-gray-400 mt-1">
+                  Current Stock: <span className="font-bold text-gray-700">{lossModal.stock} units</span>
+                </p>
+              </div>
+              
+              <div>
+                <label className="label">Loss Quantity</label>
+                <input
+                  type="number"
+                  value={lossAmount}
+                  max={lossModal.stock}
+                  min={1}
+                  onChange={(e) => setLossAmount(Math.min(lossModal.stock, Math.max(1, parseInt(e.target.value) || 1)))}
+                  className="input"
+                />
+              </div>
+
+              <div>
+                <label className="label">Reason / Notes</label>
+                <select
+                  value={lossNotes}
+                  onChange={(e) => setLossNotes(e.target.value)}
+                  className="input"
+                >
+                  <option value="spoilage/leakage">Spoilge / Leakage</option>
+                  <option value="damaged">Damaged</option>
+                  <option value="expired">Expired</option>
+                  <option value="missing">Stolen / Missing</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setLossModal(null)} className="btn-ghost flex-1 cursor-pointer">Cancel</button>
+                <button
+                  onClick={() => {
+                    recordInventoryLoss(lossModal.id, lossAmount, lossNotes);
+                    setLossModal(null);
+                  }}
+                  className="btn-danger flex-1 cursor-pointer"
+                >
+                  Record Loss
+                </button>
               </div>
             </motion.div>
           </div>
@@ -215,6 +333,7 @@ function InventoryModal({
     purchasePrice: item?.purchasePrice ?? 0,
     stock: item?.stock ?? 0,
     minStock: item?.minStock ?? 10,
+    losses: item?.losses ?? 0,
   });
 
   return (
@@ -223,7 +342,7 @@ function InventoryModal({
       <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md z-10 overflow-hidden">
         <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-[#0F5132]">
           <h2 className="text-lg font-bold text-white">{item ? 'Edit Item' : 'Add New Item'}</h2>
-          <button onClick={onClose} className="text-green-300 hover:text-white"><X size={20} /></button>
+          <button onClick={onClose} className="text-green-300 hover:text-white cursor-pointer"><X size={20} /></button>
         </div>
         <div className="p-5 space-y-4">
           <div>
@@ -260,8 +379,8 @@ function InventoryModal({
             </div>
           </div>
           <div className="flex gap-3 pt-2">
-            <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-            <button onClick={() => onSave(form)} className="btn-primary flex-1" disabled={!form.name}>{item ? 'Update' : 'Add Item'}</button>
+            <button onClick={onClose} className="btn-ghost flex-1 cursor-pointer">Cancel</button>
+            <button onClick={() => onSave(form)} className="btn-primary flex-1 cursor-pointer" disabled={!form.name}>{item ? 'Update' : 'Add Item'}</button>
           </div>
         </div>
       </motion.div>
