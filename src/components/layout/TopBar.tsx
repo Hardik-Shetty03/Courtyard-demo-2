@@ -11,6 +11,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/live-courts': 'Live Courts',
   '/court-tabs': 'Court Tabs',
   '/pos': 'Point of Sale',
+  '/tournaments': 'Tournaments',
   '/inventory': 'Inventory',
   '/tasks': 'Daily Tasks',
   '/settings': 'Settings',

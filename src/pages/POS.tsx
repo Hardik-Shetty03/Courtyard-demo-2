@@ -19,18 +19,20 @@ export default function POS() {
     return () => clearInterval(t);
   }, []);
 
-  // Find only bookings that are active and currently ongoing (start <= now && end > now)
+  // Find only bookings that are active, currently ongoing, or ended less than 20 minutes ago
   const liveBookings = bookings.filter((b) => {
     if (b.status !== 'active') return false;
     const start = new Date(b.startTime);
     const end = new Date(b.endTime);
-    return start <= now && end > now;
+    const twentyMinsInMs = 20 * 60 * 1000;
+    return start <= now && now < new Date(end.getTime() + twentyMinsInMs);
   });
   
   // Resolve selected booking
   const activeBooking = liveBookings.find((b) => b.id === selectedBookingId) || liveBookings[0];
   const activeBookingId = activeBooking?.id || '';
   const activeCourt = activeBooking ? courts.find((c) => c.id === activeBooking.courtId) : null;
+
 
   const CATEGORIES = ['drinks', 'food', 'equipment', 'other'] as const;
   const categoryLabels: Record<string, string> = {
@@ -76,6 +78,7 @@ export default function POS() {
             {liveBookings.map((b) => {
               const court = courts.find((c) => c.id === b.courtId);
               const isSelected = activeBookingId === b.id;
+              const hasEnded = new Date(b.endTime) < now;
               return (
                 <button
                   key={b.id}
@@ -92,6 +95,11 @@ export default function POS() {
                   <span className="text-xs text-gray-400">
                     {b.customerName}
                   </span>
+                  {hasEnded && (
+                    <span className="text-[10px] text-amber-600 font-bold mt-1 animate-pulse">
+                      Ended (Grace Period)
+                    </span>
+                  )}
                 </button>
               );
             })}

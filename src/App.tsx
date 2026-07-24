@@ -12,6 +12,8 @@ import Inventory from '@/pages/Inventory';
 import DailyTasks from '@/pages/DailyTasks';
 import Settings from '@/pages/Settings';
 import StatusChecker from '@/pages/StatusChecker';
+import Tournaments from '@/pages/Tournaments';
+
 
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
@@ -86,9 +88,11 @@ export default function App() {
           <Route path="live-courts" element={<LiveCourts />} />
           <Route path="court-tabs" element={<CourtTabs />} />
           <Route path="pos" element={<POS />} />
+          <Route path="tournaments" element={<Tournaments />} />
           <Route path="inventory" element={<Inventory />} />
           <Route path="tasks" element={<DailyTasks />} />
           <Route path="settings" element={<Settings />} />
+
         </Route>
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>

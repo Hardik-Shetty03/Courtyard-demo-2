@@ -26,6 +26,7 @@ export interface Booking {
   status: 'active' | 'completed' | 'cancelled';
   paymentStatus: 'paid' | 'unpaid';
   paymentMethod?: 'online' | 'cash';
+  changeLog?: Array<{ user: string; timestamp: string; action: string }>;
   createdAt: string;
 }
 
@@ -107,3 +108,44 @@ export interface CheckoutData {
   grandTotal: number;
   paymentMethod: 'cash' | 'upi' | 'card';
 }
+
+export interface TournamentParticipant {
+  id: string;
+  name: string;
+  phone?: string;
+}
+
+export interface TournamentTabItem {
+  name: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+export interface TournamentTab {
+  id: string;
+  participantName: string;
+  items: TournamentTabItem[];
+}
+
+export interface TournamentPayment {
+  id: string;
+  amount: number;
+  paymentMethod: 'cash' | 'upi' | 'card';
+  notes?: string;
+  createdAt: string;
+}
+
+export interface Tournament {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  status: 'active' | 'ended';
+  entryFee: number;
+  participants: TournamentParticipant[];
+  tabs: TournamentTab[];
+  payments: TournamentPayment[];
+  exported: boolean;
+  createdAt: string;
+}
+

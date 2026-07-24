@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Calendar, Activity, CreditCard,
-  Package, CheckSquare, Settings, LogOut, X, Dumbbell, Search
+  Package, CheckSquare, Settings, LogOut, X, Dumbbell, Search, Trophy
 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { cn } from '@/utils';
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { to: '/live-courts', icon: Activity, label: 'Live Courts' },
   { to: '/court-tabs', icon: CreditCard, label: 'Court Tabs' },
   { to: '/pos', icon: Dumbbell, label: 'POS' },
+  { to: '/tournaments', icon: Trophy, label: 'Tournaments' },
   { to: '/inventory', icon: Package, label: 'Inventory' },
   { to: '/tasks', icon: CheckSquare, label: 'Daily Tasks' },
   { to: '/settings', icon: Settings, label: 'Settings' },

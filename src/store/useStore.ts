@@ -4,7 +4,8 @@ import { persist } from 'zustand/middleware';
 import type {
   Court, Booking, CourtTab, TabItem, InventoryItem,
   DiscountType, Task, ActivityEntry, AppSettings,
-  DiscountApplication, CheckoutData
+  DiscountApplication, CheckoutData,
+  Tournament, TournamentTabItem, TournamentPayment
 } from '@/types';
 import {
   INITIAL_COURTS, INITIAL_BOOKINGS, INITIAL_TABS,
@@ -40,6 +41,7 @@ interface AppState {
   activityLog: ActivityEntry[];
   settings: AppSettings;
   completedCheckouts: CheckoutData[];
+  tournaments: Tournament[];
 
   // Auth
   isLoggedIn: boolean;
@@ -89,6 +91,26 @@ interface AppState {
   // Settings
   updateSettings: (updates: Partial<AppSettings>) => void;
 
+  // Tournaments
+  createTournament: (name: string, startDate: string, endDate: string, entryFee: number) => Promise<void>;
+  updateTournament: (tournamentId: string, updates: Partial<Tournament>) => Promise<void>;
+  deleteTournament: (tournamentId: string) => Promise<void>;
+  addTournamentParticipant: (tournamentId: string, name: string, phone?: string) => Promise<void>;
+  removeTournamentParticipant: (tournamentId: string, participantId: string) => Promise<void>;
+  addTournamentTabItem: (tournamentId: string, participantName: string, item: TournamentTabItem, inventoryItemId: string) => Promise<void>;
+  removeTournamentTabItem: (tournamentId: string, participantName: string, itemName: string, quantity: number, inventoryItemId?: string) => Promise<void>;
+  addTournamentPayment: (tournamentId: string, payment: Omit<TournamentPayment, 'id' | 'createdAt'>) => Promise<void>;
+
+  updateBookingPayment: (
+    bookingId: string,
+    newCourtPrice: number,
+    discount: { name: string; type: 'percentage' | 'fixed'; value: number } | null,
+    newNotes: string,
+    changeLogEntry: { user: string; timestamp: string; action: string }
+  ) => Promise<void>;
+
+  addPostCheckoutItem: (bookingId: string, item: Omit<TabItem, 'id'>) => Promise<void>;
+
   // Activity
   addActivity: (entry: Omit<ActivityEntry, 'id' | 'timestamp'>) => void;
 
@@ -115,6 +137,7 @@ export const useStore = create<AppState>()(
       activityLog: INITIAL_ACTIVITY,
       settings: INITIAL_SETTINGS,
       completedCheckouts: [],
+      tournaments: [],
 
       isLoggedIn: false,
 
@@ -174,6 +197,7 @@ export const useStore = create<AppState>()(
             status: b.status as any,
             paymentStatus: b.payment_status as any,
             paymentMethod: b.payment_method as any,
+            changeLog: typeof b.change_log === 'string' ? JSON.parse(b.change_log) : (b.change_log || []),
             createdAt: b.created_at,
           }));
 
@@ -251,8 +275,8 @@ export const useStore = create<AppState>()(
             };
           });
 
-          // Open tabs go to tabs state
-          const tabs = allTabs.filter(t => t.status === 'open');
+          // Include both open and checked_out tabs in state (checked_out needed for post-checkout item adds)
+          const tabs = allTabs;
 
           // Self-healing: Check if any active booking is missing an open tab
           const activeBookings = bookings.filter(b => b.status === 'active');
@@ -310,7 +334,36 @@ export const useStore = create<AppState>()(
             };
           });
 
-          set({ courts, bookings, inventory, tasks, tabs: finalTabs, completedCheckouts });
+          // 6. Fetch tournaments
+          let tournaments: Tournament[] = [];
+          try {
+            const { data: tournamentsData, error: tme } = await supabase.from('tournaments').select('*');
+            if (tme) {
+              if (tme.message.includes('relation "tournaments" does not exist') || tme.code === '42P01') {
+                console.warn('tournaments table does not exist yet. Please run migration SQL.');
+              } else {
+                console.error('Error fetching tournaments:', tme);
+              }
+            } else if (tournamentsData) {
+              tournaments = tournamentsData.map(t => ({
+                id: t.id,
+                name: t.name,
+                startDate: t.start_date,
+                endDate: t.end_date,
+                status: t.status as any,
+                entryFee: Number(t.entry_fee || 0),
+                participants: typeof t.participants === 'string' ? JSON.parse(t.participants) : (t.participants || []),
+                tabs: typeof t.tabs === 'string' ? JSON.parse(t.tabs) : (t.tabs || []),
+                payments: typeof t.payments === 'string' ? JSON.parse(t.payments) : (t.payments || []),
+                exported: t.exported || false,
+                createdAt: t.created_at,
+              }));
+            }
+          } catch (err) {
+            console.error('Error querying tournaments table:', err);
+          }
+
+          set({ courts, bookings, inventory, tasks, tabs: finalTabs, completedCheckouts, tournaments });
         } catch (error) {
           console.error('Error initializing store from Supabase:', error);
         }
@@ -1132,7 +1185,336 @@ export const useStore = create<AppState>()(
         await supabase.from('bookings').delete().neq('id', '00000000-0000-0000-0000-000000000000');
         await supabase.from('daily_tasks').update({ completed: false, completed_at: null, completed_by: null });
         await supabase.from('courts').update({ status: 'available' });
+        try {
+          await supabase.from('tournaments').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        } catch (e) {
+          console.warn('Failed to delete tournaments table on clearAllData:', e);
+        }
         await get().initializeStore();
+      },
+
+      createTournament: async (name, startDate, endDate, entryFee) => {
+        const id = safeUUID();
+        const newT: Tournament = {
+          id,
+          name,
+          startDate,
+          endDate,
+          status: 'active',
+          entryFee,
+          participants: [],
+          tabs: [],
+          payments: [],
+          exported: false,
+          createdAt: new Date().toISOString(),
+        };
+
+        set((state) => ({
+          tournaments: [...state.tournaments, newT],
+          activityLog: [
+            {
+              id: `act-${generateId()}`,
+              message: `Tournament "${name}" created.`,
+              timestamp: new Date().toISOString(),
+              type: 'booking',
+            },
+            ...state.activityLog,
+          ],
+        }));
+
+        const { error } = await supabase.from('tournaments').insert({
+          id,
+          name,
+          start_date: startDate,
+          end_date: endDate,
+          status: 'active',
+          entry_fee: entryFee,
+          participants: JSON.stringify([]),
+          tabs: JSON.stringify([]),
+          payments: JSON.stringify([]),
+          exported: false,
+        });
+
+        if (error) {
+          console.error('Supabase createTournament error:', error);
+        }
+      },
+
+      updateTournament: async (tournamentId, updates) => {
+        set((state) => ({
+          tournaments: state.tournaments.map((t) => (t.id === tournamentId ? { ...t, ...updates } : t)),
+        }));
+
+        const dbUpdates: any = {};
+        if (updates.name !== undefined) dbUpdates.name = updates.name;
+        if (updates.startDate !== undefined) dbUpdates.start_date = updates.startDate;
+        if (updates.endDate !== undefined) dbUpdates.end_date = updates.endDate;
+        if (updates.status !== undefined) dbUpdates.status = updates.status;
+        if (updates.entryFee !== undefined) dbUpdates.entry_fee = updates.entryFee;
+        if (updates.participants !== undefined) dbUpdates.participants = JSON.stringify(updates.participants);
+        if (updates.tabs !== undefined) dbUpdates.tabs = JSON.stringify(updates.tabs);
+        if (updates.payments !== undefined) dbUpdates.payments = JSON.stringify(updates.payments);
+        if (updates.exported !== undefined) dbUpdates.exported = updates.exported;
+
+        const { error } = await supabase.from('tournaments').update(dbUpdates).eq('id', tournamentId);
+        if (error) {
+          console.error('Supabase updateTournament error:', error);
+        }
+      },
+
+      deleteTournament: async (tournamentId) => {
+        set((state) => ({
+          tournaments: state.tournaments.filter((t) => t.id !== tournamentId),
+        }));
+
+        const { error } = await supabase.from('tournaments').delete().eq('id', tournamentId);
+        if (error) {
+          console.error('Supabase deleteTournament error:', error);
+        }
+      },
+
+      addTournamentParticipant: async (tournamentId, name, phone = '') => {
+        const t = get().tournaments.find(x => x.id === tournamentId);
+        if (!t) return;
+
+        const newP = { id: generateId(), name, phone };
+        const participants = [...t.participants, newP];
+
+        await get().updateTournament(tournamentId, { participants });
+      },
+
+      removeTournamentParticipant: async (tournamentId, participantId) => {
+        const t = get().tournaments.find(x => x.id === tournamentId);
+        if (!t) return;
+
+        const participants = t.participants.filter((p: any) => p.id !== participantId);
+        await get().updateTournament(tournamentId, { participants });
+      },
+
+      addTournamentTabItem: async (tournamentId, participantName, item, inventoryItemId) => {
+        const t = get().tournaments.find(x => x.id === tournamentId);
+        if (!t) return;
+
+        const tabs = [...t.tabs];
+        let tab = tabs.find((x: any) => x.participantName === participantName);
+        if (!tab) {
+          tab = { id: `tab-${generateId()}`, participantName, items: [] };
+          tabs.push(tab);
+        }
+
+        const existingItem = tab.items.find((x: any) => x.name === item.name);
+        if (existingItem) {
+          existingItem.quantity += item.quantity;
+        } else {
+          tab.items.push(item);
+        }
+
+        // Deduct inventory stock!
+        const invItem = get().inventory.find(i => i.id === inventoryItemId);
+        if (invItem) {
+          const newStock = Math.max(0, invItem.stock - item.quantity);
+          set((state) => ({
+            inventory: state.inventory.map((i) => (i.id === inventoryItemId ? { ...i, stock: newStock } : i)),
+          }));
+          await supabase.from('inventory').update({ stock: newStock }).eq('id', inventoryItemId);
+        }
+
+        await get().updateTournament(tournamentId, { tabs });
+      },
+
+      removeTournamentTabItem: async (tournamentId, participantName, itemName, quantity, inventoryItemId) => {
+        const t = get().tournaments.find(x => x.id === tournamentId);
+        if (!t) return;
+
+        const tabs = [...t.tabs];
+        const tab = tabs.find((x: any) => x.participantName === participantName);
+        if (!tab) return;
+
+        const item = tab.items.find((x: any) => x.name === itemName);
+        if (!item) return;
+
+        const actualRemovedQty = Math.min(item.quantity, quantity);
+        item.quantity -= actualRemovedQty;
+
+        if (item.quantity <= 0) {
+          tab.items = tab.items.filter((x: any) => x.name !== itemName);
+        }
+
+        // Restore inventory stock!
+        if (inventoryItemId) {
+          const invItem = get().inventory.find(i => i.id === inventoryItemId);
+          if (invItem) {
+            const newStock = invItem.stock + actualRemovedQty;
+            set((state) => ({
+              inventory: state.inventory.map((i) => (i.id === inventoryItemId ? { ...i, stock: newStock } : i)),
+            }));
+            await supabase.from('inventory').update({ stock: newStock }).eq('id', inventoryItemId);
+          }
+        }
+
+        await get().updateTournament(tournamentId, { tabs });
+      },
+
+      addTournamentPayment: async (tournamentId, payment) => {
+        const t = get().tournaments.find(x => x.id === tournamentId);
+        if (!t) return;
+
+        const newP = {
+          id: `pay-${generateId()}`,
+          ...payment,
+          createdAt: new Date().toISOString()
+        };
+        const payments = [...t.payments, newP];
+
+        await get().updateTournament(tournamentId, { payments });
+      },
+
+      updateBookingPayment: async (bookingId, newCourtPrice, discount, newNotes, changeLogEntry) => {
+        const booking = get().bookings.find(b => b.id === bookingId);
+        if (!booking) return;
+
+        const currentLog = booking.changeLog || [];
+        const updatedLog = [...currentLog, changeLogEntry];
+
+        // 1. Update local bookings state
+        set((state) => ({
+          bookings: state.bookings.map((b) =>
+            b.id === bookingId ? { ...b, totalCharge: newCourtPrice, notes: newNotes, changeLog: updatedLog } : b
+          )
+        }));
+
+        // Update database
+        const { error: be } = await supabase.from('bookings').update({
+          total_charge: newCourtPrice,
+          notes: newNotes,
+          change_log: JSON.stringify(updatedLog)
+        }).eq('id', bookingId);
+        if (be) {
+          console.error('Supabase updateBookingPayment error:', be);
+        }
+
+        // 2. Update/Insert court_tabs discount details
+        const discountApply = discount ? {
+          discountTypeId: 'custom',
+          name: discount.name,
+          type: discount.type,
+          value: discount.value,
+          amount: 0
+        } : null;
+
+        // Update local tabs state if open
+        set((state) => ({
+          tabs: state.tabs.map((t) =>
+            t.bookingId === bookingId ? { ...t, discount: discountApply } : t
+          )
+        }));
+
+        // Update database court_tabs record
+        const dbDiscount = discount ? {
+          discount_name: discount.name,
+          discount_type: discount.type,
+          discount_value: discount.value
+        } : {
+          discount_name: null,
+          discount_type: null,
+          discount_value: null
+        };
+
+        const { error: te } = await supabase.from('court_tabs').update(dbDiscount).eq('booking_id', bookingId);
+        if (te) {
+          console.error('Supabase updateBookingPayment court_tabs error:', te);
+        }
+      },
+
+      addPostCheckoutItem: async (bookingId, item) => {
+        // 1. Find the checked_out tab for this booking
+        const tab = get().tabs.find(t => t.bookingId === bookingId);
+        if (!tab) return;
+
+        const id = safeUUID();
+
+        // 2. Get DB tab ID
+        const { data: dbTabData, error: de } = await supabase.from('court_tabs').select('id').eq('booking_id', bookingId).single();
+        if (de || !dbTabData) {
+          console.error('Supabase addPostCheckoutItem tab lookup error:', de);
+          return;
+        }
+
+        // 3. Update local tabs state (add or increment)
+        set((state) => {
+          const tabs = state.tabs.map((t) => {
+            if (t.bookingId !== bookingId) return t;
+            const existing = t.items.find((i) => i.inventoryItemId === item.inventoryItemId);
+            if (existing) {
+              return {
+                ...t,
+                items: t.items.map((i) =>
+                  i.inventoryItemId === item.inventoryItemId ? { ...i, quantity: i.quantity + item.quantity } : i
+                ),
+              };
+            }
+            return { ...t, items: [...t.items, { ...item, id }] };
+          });
+
+          // Deduct stock
+          const inventory = state.inventory.map((inv) =>
+            inv.id === item.inventoryItemId ? { ...inv, stock: Math.max(0, inv.stock - item.quantity) } : inv
+          );
+
+          return { tabs, inventory };
+        });
+
+        // 4. Recalculate completedCheckout for this booking
+        const updatedTab = get().tabs.find(t => t.bookingId === bookingId);
+        const booking = get().bookings.find(b => b.id === bookingId);
+        if (updatedTab && booking) {
+          const foodAndDrinks = updatedTab.items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+          const subtotal = booking.totalCharge + foodAndDrinks;
+          let discountAmt = 0;
+          if (updatedTab.discount) {
+            discountAmt = updatedTab.discount.type === 'percentage'
+              ? (subtotal * updatedTab.discount.value) / 100
+              : updatedTab.discount.value;
+          }
+          const grandTotal = Math.max(0, subtotal - discountAmt);
+
+          set((state) => ({
+            completedCheckouts: state.completedCheckouts.map((c) =>
+              c.bookingId === bookingId
+                ? { ...c, foodAndDrinks, grandTotal }
+                : c
+            )
+          }));
+        }
+
+        // 5. Persist to Supabase — insert or update tab_items
+        const existingItem = tab.items.find((i) => i.inventoryItemId === item.inventoryItemId);
+        if (existingItem) {
+          await supabase.from('tab_items')
+            .update({ quantity: existingItem.quantity + item.quantity })
+            .eq('tab_id', dbTabData.id)
+            .eq('inventory_item_id', item.inventoryItemId);
+        } else {
+          await supabase.from('tab_items').insert({
+            id,
+            tab_id: dbTabData.id,
+            inventory_item_id: item.inventoryItemId,
+            name: item.name,
+            quantity: item.quantity,
+            unit_price: item.unitPrice,
+          });
+        }
+
+        // 6. Update inventory stock in DB
+        const invItem = get().inventory.find(i => i.id === item.inventoryItemId);
+        if (invItem) {
+          await supabase.from('inventory').update({ stock: invItem.stock }).eq('id', item.inventoryItemId);
+        }
+
+        get().addActivity({
+          message: `Post-checkout: Added ${item.name} ×${item.quantity} to ${booking?.customerName ?? bookingId}`,
+          type: 'inventory',
+        });
       },
     }),
     {

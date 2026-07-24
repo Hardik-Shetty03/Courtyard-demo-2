@@ -30,15 +30,13 @@ export function playAlarmSound() {
 
     const now = ctx.currentTime;
     
-    // Distinct double-buzzer sequence (like a scoreboard timer)
-    playTone(now, 987.77, 0.15, 'sawtooth'); // B5
-    playTone(now + 0.05, 880.00, 0.15, 'sawtooth'); // A5
-    
-    playTone(now + 0.3, 987.77, 0.15, 'sawtooth');
-    playTone(now + 0.35, 880.00, 0.15, 'sawtooth');
-    
-    playTone(now + 0.6, 987.77, 0.45, 'sawtooth');
-    playTone(now + 0.65, 880.00, 0.45, 'sawtooth');
+    // Pulsing warning buzzer sequence (10 pulses, 0.5s intervals = 5 seconds total duration)
+    for (let i = 0; i < 10; i++) {
+      const timeOffset = i * 0.5;
+      // Synthesize combined sawtooth and sine waves for a rich, attention-grabbing digital scoreboard buzz
+      playTone(now + timeOffset, 880.00, 0.4, 'sawtooth'); // A5
+      playTone(now + timeOffset, 987.77, 0.4, 'sine');     // B5
+    }
   } catch (e) {
     console.error('Web Audio API alarm sound failed:', e);
   }

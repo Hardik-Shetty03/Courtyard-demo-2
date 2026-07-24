@@ -106,6 +106,7 @@ interface BookingCardProps {
 }
 
 function BookingCard({ booking, onClick }: BookingCardProps) {
+  const { completedCheckouts, tabs } = useStore();
   const startDate = new Date(booking.startTime);
   const endDate   = new Date(booking.endTime);
 
@@ -118,6 +119,18 @@ function BookingCard({ booking, onClick }: BookingCardProps) {
   const ongoing = isCurrentlyOngoing(booking);
   const isPast  = Date.now() > endDate.getTime();
   const paid    = booking.paymentStatus === 'paid';
+
+  // Calculate discounted court price
+  let discountedPrice = booking.totalCharge;
+  const tab = tabs.find(t => t.bookingId === booking.id && t.status === 'open');
+  const checkout = completedCheckouts.find(c => c.bookingId === booking.id);
+  const discount = checkout ? checkout.discount : (tab ? tab.discount : null);
+  if (discount) {
+    const discountAmount = discount.type === 'percentage'
+      ? (booking.totalCharge * discount.value) / 100
+      : discount.value;
+    discountedPrice = Math.max(0, booking.totalCharge - discountAmount);
+  }
 
   // Status-based colors
   const colors = isPast && !paid
@@ -157,8 +170,13 @@ function BookingCard({ booking, onClick }: BookingCardProps) {
 
         {height >= 56 && (
           <div className="flex items-center justify-between mt-auto gap-1">
-            <span className="text-xs font-bold opacity-95">
-              {formatCurrency(booking.totalCharge)}
+            <span className="text-xs font-bold opacity-95 flex items-center gap-1">
+              <span>{formatCurrency(discountedPrice)}</span>
+              {discountedPrice !== booking.totalCharge && (
+                <span className="text-[10px] line-through opacity-70">
+                  ₹{booking.totalCharge}
+                </span>
+              )}
             </span>
             <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${colors.badge}`}>
               {paid ? 'PAID' : 'UNPAID'}
@@ -183,7 +201,7 @@ interface DetailModalProps {
 }
 
 function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, onCheckout }: DetailModalProps) {
-  const { cancelBooking, extendBooking, moveBooking, markPaid, discounts, tabs } = useStore();
+  const { cancelBooking, extendBooking, moveBooking, markPaid, discounts, tabs, completedCheckouts } = useStore();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showMovePanel, setShowMovePanel] = useState(false);
   const [showPaymentMethodConfirm, setShowPaymentMethodConfirm] = useState(false);
@@ -209,6 +227,20 @@ function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, on
       : selectedDiscount.value;
   }
   const finalTotal = Math.max(0, courtCharge + tabTotal - discountAmount);
+
+  // Determine any already-applied discount (from checkout or open tab)
+  const checkout = completedCheckouts.find(c => c.bookingId === booking.id);
+  const appliedDiscount = checkout ? checkout.discount : (tab ? tab.discount : null);
+  let appliedDiscountAmount = 0;
+  if (appliedDiscount) {
+    appliedDiscountAmount = appliedDiscount.type === 'percentage'
+      ? (courtCharge * appliedDiscount.value) / 100
+      : appliedDiscount.value;
+  }
+  const billingFinal = appliedDiscountAmount > 0
+    ? Math.max(0, runningTotal - appliedDiscountAmount)
+    : runningTotal;
+  const isPaid = booking.paymentStatus === 'paid';
 
   const otherCourts = courts.filter(c => c.id !== booking.courtId && c.isEnabled && !c.isMaintenanceMode);
 
@@ -420,9 +452,23 @@ function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, on
       <div className="mx-5 mb-5 bg-gray-50 rounded-xl p-4 space-y-2 border border-gray-100">
         <div className="flex justify-between text-xs text-gray-500"><span>Court Charge</span><span className="font-semibold text-gray-700">{formatCurrency(courtCharge)}</span></div>
         <div className="flex justify-between text-xs text-gray-500"><span>F&amp;B Tabs</span><span className="font-semibold text-gray-700">{formatCurrency(tabTotal)}</span></div>
+        {appliedDiscountAmount > 0 && (
+          <div className="flex justify-between text-xs text-red-500 font-medium">
+            <span className="flex items-center gap-1">
+              <span className="bg-red-50 text-red-600 px-1.5 py-0.5 rounded text-[9px] font-black uppercase">Discount</span>
+              {appliedDiscount?.name} ({appliedDiscount?.value}{appliedDiscount?.type === 'percentage' ? '%' : '₹'})
+            </span>
+            <span>-{formatCurrency(appliedDiscountAmount)}</span>
+          </div>
+        )}
         <div className="flex justify-between text-sm font-bold border-t border-gray-200 pt-2.5">
           <span>Total Bill</span>
-          <span className="text-[#0F5132]">{formatCurrency(runningTotal)}</span>
+          <span className="text-[#0F5132] flex items-center gap-1.5">
+            {formatCurrency(billingFinal)}
+            {appliedDiscountAmount > 0 && (
+              <span className="text-[10px] text-gray-400 line-through font-medium">{formatCurrency(runningTotal)}</span>
+            )}
+          </span>
         </div>
       </div>
 
@@ -456,19 +502,23 @@ function BookingDetailModal({ booking, courts, bookingsList, onClose, onEdit, on
           )}
         </div>
 
-        <button
-          onClick={() => onCheckout(booking.id)}
-          className="btn-primary w-full py-3.5 flex items-center justify-center gap-2 text-sm"
-        >
-          <CreditCard size={15} /> Checkout &amp; Pay — {formatCurrency(runningTotal)}
-        </button>
+        {!isPaid && (
+          <button
+            onClick={() => onCheckout(booking.id)}
+            className="btn-primary w-full py-3.5 flex items-center justify-center gap-2 text-sm"
+          >
+            <CreditCard size={15} /> Checkout &amp; Pay — {formatCurrency(billingFinal)}
+          </button>
+        )}
 
-        <button
-          onClick={() => setShowCancelConfirm(true)}
-          className="w-full flex items-center justify-center gap-1.5 text-red-500 hover:bg-red-50 py-2.5 rounded-xl text-xs font-semibold transition-colors"
-        >
-          <Trash2 size={13} /> Cancel Booking
-        </button>
+        {!isPaid && (
+          <button
+            onClick={() => setShowCancelConfirm(true)}
+            className="w-full flex items-center justify-center gap-1.5 text-red-500 hover:bg-red-50 py-2.5 rounded-xl text-xs font-semibold transition-colors"
+          >
+            <Trash2 size={13} /> Cancel Booking
+          </button>
+        )}
       </div>
     </ModalShell>
   );
